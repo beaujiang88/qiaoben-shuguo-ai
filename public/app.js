@@ -28,6 +28,7 @@ const state = {
   authUser: localStorage.getItem("qb_user") || "",
   role: localStorage.getItem("qb_role") || "",
   canEdit: (localStorage.getItem("qb_role") || "") === "editor",
+  inbox: [], inboxUnread: 0,
 };
 const COLS = ["members", "plans", "tasks", "proposals", "feedback", "customers", "experts", "tools", "aiTasks", "docs", "events", "followups", "reports", "media", "messages", "badges"];
 const TASK_CATS = ["产品规划", "技术开发", "市场招商", "门店运营", "内容生产", "培训考核", "合规风控", "客户服务"];
@@ -147,8 +148,10 @@ async function api(method, path, body) {
   return res.json();
 }
 async function loadAll() {
+  const inbox = await api("GET", "/inbox").catch(() => ({ list: [], unread: 0 }));
+  state.inbox = inbox.list || []; state.inboxUnread = inbox.unread || 0;
   await Promise.all(COLS.map(async c => { state.db[c] = await api("GET", `/${c}`); }));
-  renderNav(); renderUserSwitch(); render();
+  renderNav(); renderUserSwitch(); render(); renderAuthBadge();
 }
 
 // ---------- 工具 ----------
@@ -971,20 +974,105 @@ window.openInvite = () => {
     <div class="row" style="margin-top:12px"><button class="btn btn-primary" id="copyInv">📋 复制邀请链接</button></div>`);
   $("#copyInv").onclick = () => { navigator.clipboard.writeText(link); toast("邀请链接已复制，去 WorkBuddy 发给队友"); };
 };
-window.openJoin = () => {
-  openModal("加入 · 乔本·数果 AI 工作台", `<p class="muted">填写你的身份，加入项目协作（数据实时同步）。</p>
-    <div class="field"><label>你的名字</label><input id="jName" placeholder="如：李运营" /></div>
-    <div class="field"><label>角色</label><input id="jRole" placeholder="如：客户运营" /></div>
-    <div class="field"><label>头像色</label><input id="jColor" value="#2f80ed" /></div>
-    <div class="row" style="justify-content:flex-end"><button class="btn btn-primary" id="jSubmit">加入</button></div>`);
-  $("#jSubmit").onclick = async () => {
-    const name = $("#jName").value.trim(); if (!name) return toast("请填名字");
-    const m = await api("POST", "/members", { name, role: $("#jRole").value.trim() || "成员", color: $("#jColor").value.trim() || "#2f80ed" });
-    state.user = m.id; closeModal();
-    history.replaceState(null, "", location.pathname);
-    renderUserSwitch(); sendPresence(); toast("欢迎加入，" + name);
+// ---------- 收件箱 / 推送 / 改名 / 导出专项任务 ----------
+async function refreshInbox() {
+  try { const d = await api("GET", "/inbox"); state.inbox = d.list || []; state.inboxUnread = d.unread || 0; renderAuthBadge(); } catch (e) {}
+}
+window.markReadSilent = async (id) => {
+  try { await api("POST", `/inbox/${id}/read`); state.inboxUnread = Math.max(0, state.inboxUnread - 1); renderAuthBadge(); } catch (e) {}
+};
+window.markRead = async (id) => {
+  try { await api("POST", `/inbox/${id}/read`); openInbox(); } catch (e) {}
+};
+window.openShared = (col, id, shareId) => {
+  markReadSilent(shareId);
+  window.open(location.origin + "/?open=" + col + "/" + id, "_blank");
+};
+function downloadText(filename, text, mime = "text/plain") {
+  const blob = new Blob([text], { type: mime });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+window.saveAsTask = async (col, id, title) => {
+  try {
+    const item = await api("GET", `/${col}/${id}`);
+    const openLink = location.origin + "/?open=" + col + "/" + id;
+    const body = item.content || item.body || item.desc || item.text || JSON.stringify(item, null, 2);
+    const md = `# ${title || item.title || item.name || "专项任务"}\n\n> 由「乔本·数果 AI 协作工作台」推送 · 类型：${col}\n> 源链接：${openLink}\n> 导出时间：${new Date().toISOString()}\n\n本条目已作为专项任务导出，可导入你自己的 WorkBuddy，用你的 AI 能力继续修改：\n\n${body}\n\n\`\`\`json\n${JSON.stringify(item, null, 2)}\n\`\`\`\n`;
+    const json = JSON.stringify({ _source: "qiaoben-shuguo-ai", collection: col, title: title || item.title || item.name, openLink, exportedAt: new Date().toISOString(), item }, null, 2);
+    const safe = (title || col).replace(/[\\/?%*:|\"<>]/g, "_").slice(0, 40);
+    downloadText(safe + ".md", md, "text/markdown");
+    setTimeout(() => downloadText(safe + ".json", json, "application/json"), 400);
+    toast("已导出 .md / .json，可导入你自己的 WorkBuddy");
+  } catch (e) { toast("导出失败：" + e.message); }
+};
+window.openInbox = async () => {
+  let data;
+  try { data = await api("GET", "/inbox"); } catch (e) { data = { list: [], unread: 0 }; }
+  state.inbox = data.list || []; state.inboxUnread = data.unread || 0; renderAuthBadge();
+  if (!state.inbox.length) return toast("收件箱为空");
+  const items = state.inbox.map(s => {
+    const t = new Date(s.createdAt).toLocaleString();
+    return `<div class="inbox-item ${s.status === 'unread' ? 'unread' : ''}">
+      <div class="row" style="justify-content:space-between"><b>${esc(s.title)}</b><span class="muted" style="font-size:12px">${t}</span></div>
+      <div class="muted" style="font-size:12px">来自 @${esc(s.fromUsername)}${s.note ? " · " + esc(s.note) : ""}</div>
+      <div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap">
+        <button class="btn btn-sm btn-primary" onclick="openShared('${s.collection}','${s.itemId}','${s.id}')">打开</button>
+        <button class="btn btn-sm" onclick="saveAsTask('${s.collection}','${s.itemId}','${esc(String(s.title).replace(/'/g, "\\'"))}')">💾 保存为专项任务</button>
+        ${s.status === 'unread' ? `<button class="btn btn-sm" onclick="markRead('${s.id}')">标记已读</button>` : ""}
+      </div></div>`;
+  }).join("");
+  openModal("📥 收件箱 (" + state.inboxUnread + " 未读)", `<div class="inbox-list">${items}</div>`);
+};
+window.openLinkedItem = async (col, id) => {
+  try {
+    const item = await api("GET", `/${col}/${id}`);
+    const body = item.content || item.body || item.desc || item.text || JSON.stringify(item, null, 2);
+    openModal(esc(item.title || item.name || "条目详情"), `<div class="doc-body" style="white-space:pre-wrap">${esc(body)}</div>`);
+  } catch (e) { toast("打开失败：" + e.message); }
+};
+window.openRename = () => {
+  openModal("✏️ 修改名字", `<p class="muted">显示名可随时改；改 WorkBuddy 名字（身份）会同步重命名你的历史贡献归属。</p>
+    <div class="field"><label>当前 WorkBuddy 名字</label><div class="muted">@${esc(state.authUser)}</div></div>
+    <div class="field"><label>新显示名（可选）</label><input id="rnDisplay" class="login-input" value="${esc(state.authUser)}" placeholder="显示名"></div>
+    <div class="field"><label>新 WorkBuddy 名字（可选，身份）</label><input id="rnName" class="login-input" placeholder="如：beau2"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" id="rnGo">保存</button></div>`);
+  $("#rnGo").onclick = async () => {
+    const displayName = ($("#rnDisplay").value || "").trim();
+    const newUsername = ($("#rnName").value || "").trim();
+    if (!displayName && !newUsername) return closeModal();
+    try { const d = await api("POST", "/me/rename", { displayName, newUsername }); applyAuth(d); closeModal(); toast("已更新：" + (d.changedName ? "身份 @" + d.user : "显示名 " + d.displayName)); }
+    catch (e) {}
   };
 };
+window.openPushCenter = () => {
+  const PUSHABLE = ["plans", "tasks", "proposals", "customers", "docs", "media", "experts", "tools", "aiTasks", "followups", "reports", "feedback"];
+  const colOpts = PUSHABLE.map(c => `<option value="${c}">${c}</option>`).join("");
+  const userOpts = (state.db.users || []).filter(u => u.username !== state.authUser).map(u => `<label class="chk"><input type="checkbox" value="${esc(u.username)}"> ${esc(u.displayName || u.username)} <span class="muted">@${esc(u.username)}</span></label>`).join("");
+  openModal("📤 推送条目给成员", `
+    <div class="field"><label>选择条目类型</label><select id="pcCol" class="login-input">${colOpts}</select></div>
+    <div class="field"><label>选择条目</label><select id="pcItem" class="login-input"></select></div>
+    <div class="field"><label>接收成员</label><div class="chk-list">${userOpts || '<span class="muted">暂无其他成员</span>'}</div></div>
+    <div class="field"><label>附言（可选）</label><input id="pcNote" class="login-input" placeholder="例如：请协助完善该方案"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" id="pcGo">推送</button></div>`);
+  const fillItems = () => {
+    const c = $("#pcCol").value;
+    const items = state.db[c] || [];
+    $("#pcItem").innerHTML = items.map(it => `<option value="${it.id}">${esc(it.title || it.name || it.id)}</option>`).join("");
+  };
+  $("#pcCol").onchange = fillItems; fillItems();
+  $("#pcGo").onclick = async () => {
+    const c = $("#pcCol").value, id = $("#pcItem").value;
+    const sel = [...document.querySelectorAll(".chk-list input:checked")].map(x => x.value);
+    if (!id) return toast("请选择条目"); if (!sel.length) return toast("请选择接收成员");
+    const note = ($("#pcNote").value || "").trim();
+    try { const d = await api("POST", "/push", { collection: c, id, toUsernames: sel, note }); toast(`已推送给 ${d.count} 位成员`); closeModal(); }
+    catch (e) {}
+  };
+};
+
 window.openMemberForm = (id) => {
   const m = id ? state.db.members.find(x => x.id === id) : {};
   openModal(id ? "编辑成员" : "添加成员", formHTML([
@@ -1420,7 +1508,8 @@ function connectWS() {
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);
     if (msg.type === "mutation") {
-      if (msg.col && COLS.includes(msg.col)) {
+      if (msg.col === "shares") { refreshInbox(); }
+      else if (msg.col && COLS.includes(msg.col)) {
         if (msg.action === "delete") state.db[msg.col] = state.db[msg.col].filter(x => x.id !== msg.data.id);
         else { const i = state.db[msg.col].findIndex(x => x.id === msg.data.id); if (i >= 0) state.db[msg.col][i] = msg.data; else state.db[msg.col].push(msg.data); }
         if (msg.event) state.db.events = [msg.event, ...state.db.events].slice(0, 200);
@@ -1444,48 +1533,21 @@ function showLogin(msg) {
   if (!box) return;
   box.classList.remove("hidden");
   const tip = $("#loginTip");
-  if (tip) tip.textContent = msg || "登录后使用乔本·数果 AI 协作工作台";
-  switchAuthTab(authMode);
-}
-function switchAuthTab(mode) {
-  authMode = mode;
-  const loginPanel = $("#loginPanel"), regPanel = $("#regPanel"), loginTab = $("#tabLogin"), regTab = $("#tabRegister");
-  if (loginPanel && regPanel) {
-    loginPanel.classList.toggle("hidden", mode !== "login");
-    regPanel.classList.toggle("hidden", mode !== "register");
-  }
-  if (loginTab && regTab) {
-    loginTab.classList.toggle("active", mode === "login");
-    regTab.classList.toggle("active", mode === "register");
-  }
-  const focusId = mode === "login" ? "loginUser" : "regUser";
-  setTimeout(() => { const el = $(focusId); if (el) el.focus(); }, 50);
+  if (tip) tip.textContent = msg || "输入你的 WorkBuddy 名字即可申请加入";
+  setTimeout(() => { const el = $("#joinName"); if (el) el.focus(); }, 50);
 }
 
-async function doLogin() {
-  const u = ($("#loginUser").value || "").trim();
-  if (!u) return toast("请输入用户名");
+// 名字即身份：输入 WorkBuddy 名字 → 自动建号/登录 + 申请访问
+async function doJoin() {
+  const u = ($("#joinName").value || "").trim();
+  const dn = ($("#joinDisplay").value || "").trim();
+  if (!u || u.length < 2) return toast("名字至少 2 个字符");
   try {
-    const res = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: u }) });
+    const res = await fetch("/api/join", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: u, displayName: dn || u }) });
     const d = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      if (d.needRegister) { switchAuthTab("register"); return toast("用户不存在，请先注册"); }
-      return toast(d.error || "登录失败");
-    }
+    if (!res.ok) return toast(d.error || "加入失败");
     applyAuth(d);
-  } catch (e) { toast("登录请求失败：" + e.message); }
-}
-
-async function doRegister() {
-  const u = ($("#regUser").value || "").trim();
-  const dn = ($("#regDisplay").value || "").trim();
-  if (!u || u.length < 2) return toast("用户名至少 2 个字符");
-  try {
-    const res = await fetch("/api/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: u, displayName: dn || u }) });
-    const d = await res.json().catch(() => ({}));
-    if (!res.ok) return toast(d.error || "注册失败");
-    applyAuth(d);
-  } catch (e) { toast("注册请求失败：" + e.message); }
+  } catch (e) { toast("请求失败：" + e.message); }
 }
 
 function applyAuth(d) {
@@ -1493,11 +1555,19 @@ function applyAuth(d) {
   localStorage.setItem("qb_user", d.user);
   localStorage.setItem("qb_role", d.role);
   state.token = d.token; state.authUser = d.user; state.role = d.role;
+  state.user = "m_" + d.user;
   state.canEdit = d.role === "editor" || d.role === "admin";
   $("#loginBox").classList.add("hidden");
+  let hint = "";
+  if (d.requestStatus === "pending") hint = "已提交访问申请，等待管理员审批（当前只读）";
+  else if (state.role === "user") hint = "当前只读，可在右上角申请编辑权限";
   renderAuthBadge();
-  loadAll().then(() => { connectWS(); toast("欢迎回来，" + (d.displayName || d.user) + getRoleLabel(d.role)); })
-    .catch(() => showLogin("加载失败，请重新登录"));
+  loadAll().then(() => {
+    connectWS();
+    toast("欢迎，" + (d.displayName || d.user) + getRoleLabel(d.role) + (hint ? "：" + hint : ""));
+    const open = new URLSearchParams(location.search).get("open");
+    if (open) { const [c, id] = open.split("/"); openLinkedItem(c, id); }
+  }).catch(() => showLogin("登录状态无效，请重新登录"));
 }
 
 function getRoleLabel(role) {
@@ -1569,8 +1639,11 @@ function renderAuthBadge() {
   if (!state.authUser) { el.innerHTML = ""; return; }
   const roleTxt = state.role === "admin" ? "管理员" : state.canEdit ? "协作者" : "只读";
   let btns = "";
+  btns += `<button class="auth-btn" onclick="openInbox()">📥 收件箱${state.inboxUnread ? `<span class="badge-dot">${state.inboxUnread}</span>` : ""}</button>`;
   if (state.role === "admin") btns += `<button class="auth-btn" onclick="showApprovalPanel()">📋 审批</button>`;
+  if (state.canEdit) btns += `<button class="auth-btn" onclick="openPushCenter()">📤 推送</button>`;
   if (!state.canEdit && state.authUser) btns += `<button class="auth-btn auth-warn" onclick="applyForAccess()">📝 申请编辑权限</button>`;
+  btns += `<button class="auth-btn" onclick="openRename()">✏️ 改名</button>`;
   btns += `<button class="auth-logout" onclick="doLogout()">退出</button>`;
   el.innerHTML = `<span class="auth-user">${esc(state.authUser)}</span><span class="auth-role ${state.canEdit ? 'ed' : 'ro'}">${roleTxt}</span>${btns}`;
   document.body.classList.toggle("readonly", !state.canEdit);
@@ -1578,12 +1651,14 @@ function renderAuthBadge() {
 
 // ---------- 启动 ----------
 if (!state.token) {
-  showLogin("登录后使用乔本·数果 AI 协作工作台");
+  if (new URLSearchParams(location.search).get("join")) showLogin("通过邀请链接加入：输入你的 WorkBuddy 名字即可申请访问");
+  else showLogin("输入你的 WorkBuddy 名字即可申请加入");
 } else {
   loadAll().then(() => {
     renderAuthBadge();
     connectWS();
-    if (new URLSearchParams(location.search).get("join")) openJoin();
+    const open = new URLSearchParams(location.search).get("open");
+    if (open) { const [c, id] = open.split("/"); openLinkedItem(c, id); }
   }).catch(() => showLogin("登录状态无效，请重新登录"));
 }
 

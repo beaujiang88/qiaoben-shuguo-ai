@@ -1,0 +1,16 @@
+services:
+  qiaoben:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - HOST=0.0.0.0
+      - AUTH_SECRET=change-me-in-prod
+      - DATA_FILE=/data/db.json
+    volumes:
+      - qiaoben-data:/data
+    restart: unless-stopped
+
+volumes:
+  qiaoben-data:

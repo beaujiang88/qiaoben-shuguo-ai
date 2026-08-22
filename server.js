@@ -10,16 +10,22 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_FILE = path.join(__dirname, "data", "db.json");
+const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, "data", "db.json");
 const PUBLIC_DIR = path.join(__dirname, "public");
 const PORT = process.env.PORT || 3088;
+// 云端部署：绑定全部网卡（0.0.0.0），由 PaaS/容器映射外部端口
+const HOST = process.env.HOST || "0.0.0.0";
+
+// 头像配色（新成员自动分配）
+const MEMBER_COLORS = ["#7c5cff", "#1e9e6a", "#e8833a", "#2f80ed", "#e0533d", "#16a085", "#8e44ad", "#d35400"];
+function pickColor() { return MEMBER_COLORS[Math.floor(Math.random() * MEMBER_COLORS.length)]; }
 
 // ---------- 共享数据库（JSON 文件） ----------
 const COLLECTIONS = [
   "members", "plans", "tasks", "proposals", "feedback",
   "customers", "experts", "tools", "aiTasks", "docs", "events",
   "followups", "reports", "media", "messages", "badges",
-  "users", "accessRequests"
+  "users", "accessRequests", "shares"
 ];
 
 function seed() {
@@ -218,7 +224,7 @@ function seed() {
   // 访问申请：用户申请编辑权限，管理员审批
   const accessRequests = [];
 
-  return { members, plans, tasks, proposals, feedback, customers, experts, tools, aiTasks, docs, events, followups, reports, media, messages, badges, users, accessRequests, meta: { project: "乔本·数果 AI 肠道健康管理项目", createdAt: now } };
+  return { members, plans, tasks, proposals, feedback, customers, experts, tools, aiTasks, docs, events, followups, reports, media, messages, badges, users, accessRequests, shares: [], meta: { project: "乔本·数果 AI 肠道健康管理项目", createdAt: now } };
 }
 
 function loadDB() {
@@ -265,6 +271,9 @@ app.use(express.json({ limit: "5mb" }));
 app.use("/api", (req, res, next) => { console.log(`[REQ] ${req.method} ${req.path}`); next(); });
 app.use(express.static(PUBLIC_DIR));
 
+// 健康检查（公开，供 PaaS/容器探活）
+app.get("/api/health", (req, res) => res.json({ ok: true, ts: Date.now() }));
+
 // ---------- 访问控制（注册 + 申请 → 审批） ----------
 // 管理员列表：初始管理员可通过环境变量覆盖
 const ADMIN_USERS = (process.env.ADMIN_USERS || "beau").split(",").map(s => s.trim()).filter(Boolean);
@@ -297,8 +306,8 @@ function getUserRole(username) {
 // 注册在「注册/登录」路由之前，确保 apply-access 等需登录接口能先拿到 req.auth
 app.use("/api", (req, res, next) => {
   const p = req.path;
-  // 公开接口：注册、登录、在线状态
-  if (p === "/register" || p === "/login" || p === "/presence") return next();
+  // 公开接口：注册、登录、申请加入、在线状态、健康检查
+  if (p === "/register" || p === "/login" || p === "/join" || p === "/presence" || p === "/health") return next();
   const auth = req.headers["authorization"] || "";
   const tok = auth.startsWith("Bearer ") ? auth.slice(7) : null;
   const payload = verifyToken(tok);
@@ -311,7 +320,7 @@ app.use("/api", (req, res, next) => {
   // 写操作需要 editor 或 admin；申请/审批类接口由路由层自行校验角色
   if (["POST", "PUT", "DELETE", "PATCH"].includes(req.method)) {
     // /apply-access（申请编辑权限）与 /access-requests/*（审批）放行，角色在路由层校验
-    const openWrite = p === "/apply-access" || p.startsWith("/access-requests");
+    const openWrite = p === "/apply-access" || p.startsWith("/access-requests") || p === "/me/rename";
     if (!openWrite && !["editor", "admin"].includes(latestRole)) {
       return res.status(403).json({ error: "无修改权限：请先申请并获得编辑权限" });
     }
@@ -341,6 +350,48 @@ app.post("/api/login", (req, res) => {
   if (!user) return res.status(401).json({ error: "用户不存在，请先注册", needRegister: true });
   const token = makeToken(name, user.role);
   res.json({ token, user: name, role: user.role, displayName: user.displayName });
+});
+
+// 确保某 WorkBuddy 名字对应一个成员（聊天/团队/负责人身份）
+function ensureMember(username, displayName) {
+  const id = "m_" + username;
+  if (!getCol("members").find(m => m.id === id)) {
+    DB.members.push({ id, name: displayName || username, role: "成员", color: pickColor(), online: false });
+    saveDB(DB);
+  }
+  return id;
+}
+
+// 申请加入（公开）：输入 WorkBuddy 名字即身份，自动建号 + 申请访问
+// 老用户直接登录；新用户建号并进入只读，待管理员审批后获得编辑权限
+app.post("/api/join", (req, res) => {
+  const { username, displayName } = req.body || {};
+  const name = String(username || "").trim();
+  if (!name || name.length < 2) return res.status(400).json({ error: "名字至少 2 个字符" });
+  let user = getCol("users").find(u => u.username === name);
+  let created = false;
+  if (!user) {
+    user = { id: "u_" + nanoid(6), username: name, displayName: String(displayName || name).trim() || name, role: "user", createdAt: Date.now() };
+    DB.users.push(user);
+    ensureMember(name, user.displayName);
+    created = true;
+    saveDB(DB);
+  } else {
+    ensureMember(name, user.displayName);
+  }
+  // 申请访问状态
+  let requestStatus = user.role !== "user" ? "approved" : null;
+  if (user.role === "user") {
+    let ar = getCol("accessRequests").find(a => a.username === name && a.status === "pending");
+    if (!ar) {
+      ar = { id: "ar_" + nanoid(8), username: name, displayName: user.displayName, reason: "", status: "pending", requestedAt: Date.now(), reviewedBy: null, reviewedAt: null };
+      DB.accessRequests.push(ar);
+      saveDB(DB);
+    }
+    requestStatus = "pending";
+  }
+  const token = makeToken(name, user.role);
+  res.json({ token, user: name, role: user.role, displayName: user.displayName, requestStatus, created });
 });
 
 // 申请编辑权限（需登录）
@@ -395,6 +446,88 @@ app.post("/api/access-requests/:id/reject", (req, res) => {
   ar.reviewedAt = Date.now();
   saveDB(DB);
   res.json({ message: `已拒绝 ${ar.username} 的编辑权限申请`, request: ar });
+});
+
+// 自行修改名字（需登录）：可改显示名，也可改 WorkBuddy 名字（身份），并尽量重映射历史数据
+function remapIdentity(oldName, newName) {
+  const fix = (v) => {
+    if (v === oldName) return newName;
+    if (v === "m_" + oldName) return "m_" + newName;
+    return v;
+  };
+  for (const col of COLLECTIONS) {
+    if (col === "users") continue;
+    for (const item of getCol(col)) {
+      for (const k of Object.keys(item)) {
+        if (typeof item[k] === "string") item[k] = fix(item[k]);
+      }
+    }
+  }
+  const mem = getCol("members").find(m => m.id === "m_" + oldName);
+  if (mem) { mem.id = "m_" + newName; if (mem.name === oldName) mem.name = newName; }
+}
+
+app.post("/api/me/rename", (req, res) => {
+  const oldName = req.auth?.user;
+  if (!oldName) return res.status(401).json({ error: "未登录" });
+  const user = getCol("users").find(u => u.username === oldName);
+  if (!user) return res.status(404).json({ error: "用户不存在" });
+  const { displayName, newUsername } = req.body || {};
+  if (displayName && String(displayName).trim()) user.displayName = String(displayName).trim();
+  let changedName = false;
+  if (newUsername && newUsername.trim() && newUsername.trim() !== oldName) {
+    const nn = newUsername.trim();
+    if (getCol("users").find(u => u.username === nn)) return res.status(409).json({ error: "该名字已被占用" });
+    remapIdentity(oldName, nn);
+    user.username = nn;
+    changedName = true;
+  }
+  saveDB(DB);
+  const token = makeToken(user.username, user.role);
+  res.json({ token, user: user.username, role: user.role, displayName: user.displayName, changedName });
+});
+
+// 推送（编辑/管理员）：把某条目推送给指定成员，进入对方收件箱
+app.post("/api/push", (req, res) => {
+  if (!["editor", "admin"].includes(req.auth?.role)) return res.status(403).json({ error: "仅协作者/管理员可推送" });
+  const { collection, id, toUsernames, note } = req.body || {};
+  if (!COLLECTIONS.includes(collection) || !id) return res.status(400).json({ error: "缺少目标条目" });
+  const item = find(collection, id);
+  if (!item) return res.status(404).json({ error: "条目不存在" });
+  const targets = Array.isArray(toUsernames) ? toUsernames : (toUsernames ? [toUsernames] : []);
+  if (!targets.length) return res.status(400).json({ error: "请选择接收成员" });
+  const created = [];
+  for (const tu of targets) {
+    if (!getCol("users").find(u => u.username === tu)) continue;
+    const sh = {
+      id: "sh_" + nanoid(8), fromUsername: req.auth.user, toUsername: tu,
+      collection, itemId: id, title: item.title || item.name || "（无标题）",
+      note: note || "", createdAt: Date.now(), status: "unread",
+    };
+    DB.shares.push(sh); created.push(sh);
+  }
+  saveDB(DB);
+  broadcast({ type: "mutation", col: "shares", action: "create", data: created });
+  res.json({ ok: true, count: created.length, shares: created });
+});
+
+// 收件箱（当前用户收到的推送）
+app.get("/api/inbox", (req, res) => {
+  const u = req.auth?.user;
+  if (!u) return res.status(401).json({ error: "未登录" });
+  const list = getCol("shares").filter(s => s.toUsername === u).sort((a, b) => b.createdAt - a.createdAt);
+  res.json({ list, unread: list.filter(s => s.status === "unread").length });
+});
+
+// 标记已读
+app.post("/api/inbox/:id/read", (req, res) => {
+  const u = req.auth?.user;
+  if (!u) return res.status(401).json({ error: "未登录" });
+  const sh = getCol("shares").find(s => s.id === req.params.id && s.toUsername === u);
+  if (!sh) return res.status(404).json({ error: "不存在" });
+  sh.status = "read";
+  saveDB(DB);
+  res.json({ ok: true, share: sh });
 });
 
 // 鉴权中间件已上移至「注册」路由之前（见下方），确保 apply-access 等路由先经过鉴权。
@@ -627,6 +760,6 @@ wss.on("connection", (ws) => {
 // 在线成员查询
 app.get("/api/presence", (req, res) => res.json([...presence.values()]));
 
-server.listen(PORT, () => {
-  console.log(`乔本·数果 AI 工作台已启动: http://localhost:${PORT}`);
+server.listen(PORT, HOST, () => {
+  console.log(`乔本·数果 AI 工作台已启动: http://${HOST}:${PORT}`);
 });

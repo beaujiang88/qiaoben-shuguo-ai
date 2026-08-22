@@ -1,19 +1,25 @@
-# 乔本·数果 AI 工作台 — 部署镜像（零数据库依赖）
-FROM node:20-alpine
+# 乔本·数果 AI 工作台 — 容器镜像
+FROM node:22-alpine
 
 WORKDIR /app
 
 # 先装依赖（利用层缓存）
-COPY package.json ./
+COPY package*.json ./
 RUN npm install --omit=dev
 
-# 拷贝应用
+# 复制应用代码
 COPY . .
 
-# 数据持久化目录（运行时把宿主机目录挂到 /app/data）
-RUN mkdir -p /app/data
+# 运行时数据挂载到 /data（务必在运行时挂卷，否则容器销毁数据丢失）
+ENV PORT=8080 \
+    HOST=0.0.0.0 \
+    AUTH_SECRET=qiaoben-shuguo-ai-secret-2026 \
+    DATA_FILE=/data/db.json
 
-ENV PORT=3088
-EXPOSE 3088
+EXPOSE 8080
+
+# 健康检查（PaaS / 编排探活）
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -qO- http://localhost:${PORT}/api/health || exit 1
 
 CMD ["node", "server.js"]

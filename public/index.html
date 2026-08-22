@@ -12,26 +12,17 @@
     <div class="login-card">
       <div class="login-logo" style="background:url('mascot-head.png') center/cover"></div>
       <div class="login-title">乔本·数果 AI 工作台</div>
-      <div id="loginTip" class="login-tip">登录后使用协作工作台</div>
-      <!-- Tab 切换 -->
-      <div class="auth-tabs">
-        <button id="tabLogin" class="auth-tab active" onclick="switchAuthTab('login')">登录</button>
-        <button id="tabRegister" class="auth-tab" onclick="switchAuthTab('register')">注册</button>
+      <div id="loginTip" class="login-tip">输入你的 WorkBuddy 名字即可申请加入</div>
+      <div class="field">
+        <input id="joinName" class="login-input" placeholder="你的 WorkBuddy 名字（如：beau）" autocomplete="username"
+          onkeydown="if(event.key==='Enter')doJoin()" />
       </div>
-      <!-- 登录面板 -->
-      <div id="loginPanel">
-        <input id="loginUser" class="login-input" placeholder="输入你的注册名（WorkBuddy 用户名）" autocomplete="username"
-          onkeydown="if(event.key==='Enter')doLogin()" />
-        <button class="btn btn-primary login-btn" onclick="doLogin()">登 录</button>
+      <div class="field">
+        <input id="joinDisplay" class="login-input" placeholder="显示名（可选，如：林博士）" autocomplete="nickname"
+          onkeydown="if(event.key==='Enter')doJoin()" />
       </div>
-      <!-- 注册面板 -->
-      <div id="regPanel" class="hidden">
-        <input id="regUser" class="login-input" placeholder="注册名（用于登录）" autocomplete="username" />
-        <input id="regDisplay" class="login-input" placeholder="显示名称（可选，如：林博士）" autocomplete="nickname"
-          onkeydown="if(event.key==='Enter')doRegister()" />
-        <button class="btn btn-primary login-btn" onclick="doRegister()">注 册</button>
-      </div>
-      <div class="login-note">注册后默认为只读身份，需申请并通过审批后才可编辑数据。</div>
+      <button class="btn btn-primary login-btn" onclick="doJoin()">申请访问 / 进入</button>
+      <div class="login-note">输入名字即身份：新成员默认只读，申请后由管理员审批通过即可编辑数据。</div>
     </div>
   </div>
 
@@ -51,7 +42,7 @@
       <div id="authBadge" class="auth-badge"></div>
       <div id="presence" class="presence" title="在线成员"></div>
       <select id="userSwitch" class="user-switch" title="切换当前操作者"></select>
-      <button id="shareBtn" class="btn btn-primary">↗ 分享 / 转发</button>
+      <button id="shareBtn" class="btn btn-primary" onclick="openInvite()">↗ 分享 / 转发</button>
     </div>
   </header>
 

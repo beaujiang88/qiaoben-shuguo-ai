@@ -208,6 +208,16 @@ body.readonly #shareBtn{display:none}
 .approval-panel{max-height:400px;overflow-y:auto}
 .approval-item{padding:12px;border-bottom:1px solid var(--line);border-radius:8px;margin-bottom:8px;background:var(--bg)}
 
+/* 收件箱 / 推送 / 改名 */
+.chk-list{display:flex;flex-direction:column;gap:6px;max-height:200px;overflow:auto;padding:6px 2px}
+.chk{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:4px 6px;border-radius:8px}
+.chk:hover{background:var(--chip)}
+.chk input{width:16px;height:16px;accent-color:var(--brand)}
+.inbox-list{display:flex;flex-direction:column;gap:10px;max-height:60vh;overflow:auto}
+.inbox-item{padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--bg)}
+.inbox-item.unread{border-color:rgba(124,92,255,.4);background:rgba(124,92,255,.04)}
+.badge-dot{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;margin-left:5px;border-radius:9px;background:var(--red);color:#fff;font-size:10px;font-weight:700;vertical-align:middle}
+
 /* ---------- 移动端适配（≤820px：手机 / 小平板竖屏） ---------- */
 .nav-toggle{display:none}
 .nav-backdrop{display:none}

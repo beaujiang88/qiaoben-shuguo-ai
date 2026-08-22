@@ -1,0 +1,18 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "build": {
+    "builder": "dockerfile",
+    "dockerfilePath": "Dockerfile"
+  },
+  "deploy": {
+    "healthcheckPath": "/api/health",
+    "healthcheckTimeout": 100,
+    "restartPolicyType": "on_failure",
+    "sleepApplication": false,
+    "env": {
+      "PORT": "8080",
+      "HOST": "0.0.0.0",
+      "DATA_FILE": "/data/db.json"
+    }
+  }
+}

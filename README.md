@@ -51,39 +51,56 @@ npm start          # 默认 http://localhost:3088
 - **统一路径视图**：在「客户系统」点「统一路径」标签，看到所有渠道及其带来的 C 端用户，数据全互通、统一管理。
 - 方案、数据反馈、AI 任务均可关联任一 B/C 客户，跨模块联动。
 
-## 团队：邀请其他 WorkBuddy 用户协作（已打通）
-- 在「团队」页点 **🔗 邀请 WorkBuddy 用户** → 复制邀请链接（形如 `http://地址/?join=1`）。
-- 把链接发给其他 WorkBuddy 用户，他们打开后填写身份即成为协作成员，**所有改动经后端实时同步**。
-- 说明：本工作台是独立实时协作应用，邀请即「可访问 + 可编辑 + 实时同步」；WorkBuddy 原生账号体系登录需在 WorkBuddy 平台侧配置，此处通过可分享链接实现跨用户协作。
+## 团队：邀请其他 WorkBuddy 用户协作（名字即身份，免注册）
+- 在「团队」页点 **🔗 邀请 WorkBuddy 用户** → 复制邀请链接（形如 `https://你的域名/?join=1`）发给队友。
+- 对方打开后**只需输入自己的 WorkBuddy 名字**即可申请加入，**无需注册、无需密码**：
+  - 新成员默认**只读**；点「📝 申请编辑权限」→ 你（管理员）在右上角「📋 审批」通过 → 对方变为协作者可编辑。
+  - 成员后期可点右上角 **✏️ 改名** 随时改显示名，或改 WorkBuddy 名字（身份会同步重映射其历史贡献归属）。
+- 说明：本工作台是独立实时协作应用，通过「名字 = 身份」+ 审批实现跨用户协作；WorkBuddy 原生账号体系的深度登录需在 WorkBuddy 平台侧配置，此处用可分享链接 + 名字即可接入。
 
-## 分享 / 转发
+## 分享 / 转发 / 推送
 - 点右上角「分享 / 转发」：
-  - **复制访问地址**发给团队成员 → 同一网络或部署后公网即可多人协作。
+  - **复制访问地址**发给团队成员 → 部署后公网即可多人协作。
   - **导出数据**(整库 JSON) / **导入数据**：用于备份、换环境迁移。
+- **📤 推送条目给成员（协作者/管理员）**：右上角「📤 推送」→ 选条目 + 勾选接收成员 + 附言 → 对方在「📥 收件箱」收到。
+- **📥 收件箱 + 保存为专项任务**：成员在收件箱可「打开」（深链直达条目）或「💾 保存为专项任务」——下载 `.md` / `.json` 包，导入**自己的 WorkBuddy** 即成为其专项任务，用自己的 AI 能力继续修改。
+- 说明：第三方网页无法直接写入他人 WorkBuddy 账号，因此用「导出包 + 深链」桥接：对方在自己 WorkBuddy 打开链接或导入文件，即与其账户 AI 能力绑定。
 
-## 部署到公网（多人远程协作）
-三种方式任选其一，部署后把访问地址发给队友，即可**真正多人实时协作**（无需注册，WebSocket 实时同步）。
+## 部署到云端（脱离 Mac，24/7 可用）
+本仓库已做成**云原生就绪**：绑定 `0.0.0.0`、端口/数据路径/密钥全部走环境变量、内置 `/api/health` 探活。
 
-**方式 1 · 直接跑（云主机）**
+**环境变量（均可选，有默认值）**
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `PORT` | `3088` | 监听端口（PaaS 用 8080/3000 等） |
+| `HOST` | `0.0.0.0` | 监听网卡 |
+| `DATA_FILE` | `./data/db.json` | 数据文件路径，**容器务必挂卷**（如 `/data/db.json`） |
+| `AUTH_SECRET` | 内置默认 | 鉴权签名密钥，生产请改成随机长串 |
+| `ADMIN_USERS` | `beau` | 初始管理员用户名（逗号分隔） |
+
+**方式 1 · 任意云主机 / 轻量服务器（Docker，推荐）**
 ```bash
-cd qiaoben-shuguo-ai && npm install && npm start
+docker compose up -d --build
+# 或： docker build -t qiaoben . && docker run -d -p 8080:8080 -v qiaoben-data:/data --restart unless-stopped qiaoben
 ```
-开放对应端口（默认 3088）即可公网访问。改端口：`PORT=8080 npm start`。
+数据落在命名卷 `qiaoben-data`，重启 / 升级不丢。换端口改 `-p`。
 
-**方式 2 · Docker（推荐，一键）**
+**方式 2 · 免费 PaaS（Render / Railway / Koyeb）**
+1. 在 PaaS 导入本 GitHub 仓库（已含 `Dockerfile` / `render.yaml` / `railway.json`）。
+2. 新建 Web Service → 选 **Docker** 构建 → 环境变量设 `AUTH_SECRET`（**必改**）、`PORT=8080`、`DATA_FILE=/data/db.json`。
+3. ⚠️ 免费版**无持久磁盘**：进程重启 / 重新部署会重置数据。要持久化请开 Render Disks / Railway Volume 挂到 `/data`，或用付费 plan。
+4. 部署完成后把生成的域名（如 `xxx.onrender.com`）发给队友即可。
+
+**方式 3 · 直接跑（临时 / 内网）**
 ```bash
-docker build -t qiaoben-shuguo .
-docker run -d -p 80:3088 --restart unless-stopped \
-  -v $(pwd)/data:/app/data qiaoben-shuguo
+npm install && PORT=8080 npm start
 ```
-- 数据持久化：挂载 `-v $(pwd)/data:/app/data`，重启/升级不丢数据。
-- 换端口：改 `-p 8080:3088`。
 
-**方式 3 · HTTPS / 域名（生产环境）**
-用 Nginx / Caddy 反代到 `127.0.0.1:3088` 并签发证书，即可用 `https://你的域名` 访问（实时同步走 WebSocket，反代需支持 Upgrade）。示例 Nginx：
+**方式 4 · HTTPS / 域名（生产环境）**
+用 Nginx / Caddy 反代到容器端口并签证书，即可用 `https://你的域名` 访问（实时同步走 WebSocket，反代需支持 Upgrade）。示例 Nginx：
 ```nginx
 location / {
-  proxy_pass http://127.0.0.1:3088;
+  proxy_pass http://127.0.0.1:8080;
   proxy_http_version 1.1;
   proxy_set_header Upgrade $http_upgrade;
   proxy_set_header Connection "upgrade";
@@ -91,7 +108,7 @@ location / {
 }
 ```
 
-**数据说明**：全部业务数据存于 `data/db.json`（轻量 JSON，零数据库依赖）。备份=拷贝该文件；迁移=导出/导入 JSON（页面右上角「分享/转发」也可）。
+**数据说明**：全部业务数据存于 `DATA_FILE`（默认 `data/db.json`，轻量 JSON，零数据库依赖）。备份=拷贝该文件；迁移=导出/导入 JSON（页面右上角「分享 / 转发」也可）。
 
 ## 技术栈
 Node + Express + ws（实时同步）+ 原生 JS SPA，无构建步骤。数据落盘 `data/db.json`。
