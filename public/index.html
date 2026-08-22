@@ -12,7 +12,7 @@
     <div class="login-card">
       <div class="login-logo" style="background:url('mascot-head.png') center/cover"></div>
       <div class="login-title">乔本·数果 AI 工作台</div>
-      <div id="loginTip" class="login-tip">输入名字与密码登录：成员用「名字 + 密码 qbsh2026@」（只读，需审批）；管理员用「管理员账号 + 管理员密码」直接获权</div>
+      <div id="loginTip" class="login-tip">输入名字与密码登录：成员用「任意名字 + 团队共享密码」（默认只读，需审批）；管理员用「管理员账号 + 管理员密码」直接获权。</div>
       <div class="field">
         <input id="joinName" class="login-input" placeholder="你的名字（如：beau）" autocomplete="username"
           onkeydown="if(event.key==='Enter')doJoin()" />
@@ -26,7 +26,7 @@
           onkeydown="if(event.key==='Enter')doJoin()" />
       </div>
       <button class="btn btn-primary login-btn" onclick="doJoin()">登录 / 进入</button>
-      <div class="login-note">成员：任意名字 + 密码 <b>qbsh2026@</b> 登录，默认只读，在右上角「✏️ 改名」提交申请后由管理员审批解锁。管理员：使用管理员账号 + 管理员密码，直接获得全部操作权限，无需审批。</div>
+      <div class="login-note">成员：任意名字 + 团队共享密码登录，默认只读，在右上角「✏️ 改名」提交申请后由管理员审批解锁。管理员：使用管理员账号 + 管理员密码，直接获得全部操作权限，无需审批。</div>
     </div>
   </div>
 

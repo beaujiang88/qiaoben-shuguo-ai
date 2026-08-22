@@ -151,7 +151,23 @@ async function loadAll() {
   const inbox = await api("GET", "/inbox").catch(() => ({ list: [], unread: 0 }));
   state.inbox = inbox.list || []; state.inboxUnread = inbox.unread || 0;
   await Promise.all(COLS.map(async c => { state.db[c] = await api("GET", `/${c}`); }));
-  renderNav(); renderUserSwitch(); render(); renderAuthBadge();
+  renderAll();
+}
+
+// 渲染与鉴权解耦：渲染出错只提示，绝不再弹回登录框（否则会把已登录用户踢回登录层）
+function renderAll() {
+  try {
+    renderNav(); renderUserSwitch(); render(); renderAuthBadge();
+  } catch (e) {
+    console.error("渲染出错：", e);
+    toast("页面渲染出错：" + (e && e.message || e));
+  }
+}
+
+// 仅在真正鉴权失效（token 已被清空）时才弹登录框；其它加载/渲染错误只提示
+function onLoadFail(err) {
+  if (!state.token) showLogin("登录已过期，请重新登录");
+  else { console.error("加载失败：", err); toast("加载失败，请刷新重试：" + (err && err.message || err)); }
 }
 
 // ---------- 工具 ----------
@@ -376,6 +392,16 @@ function renderOverview(main) {
     <div class='card'><h3>📞 近期随访</h3>${db.followups.slice(0, 6).map(f => `<div style='margin:8px 0;font-size:13px'><span class='chip brand'>${esc(f.type)}</span> ${esc(cName(f.customerId))} · ${mName(f.byMember)}<div class='muted'>${f.date} · ${esc(f.content)}</div></div>`).join('') || "<div class='muted'>暂无随访</div>"}</div>
     <div class='card'><h3>🕘 最近动态</h3>${db.events.slice(0, 8).map(e => `<div style='margin:7px 0;font-size:13px'><span class='chip brand'>${mName(e.actor)}</span> ${esc(e.text)} <span class='muted'>· ${timeAgo(e.ts)}</span></div>`).join('')}</div>
   </div>`;
+}
+function renderActivity(main) {
+  const list = state.db.events || [];
+  main.innerHTML = `<div class='page-head'><div><h2>🕘 动态</h2><div class='sub'>团队操作时间线，实时同步</div></div></div>
+    <div class='card'>
+      ${list.map(e => `<div class='row' style='justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)'>
+        <div style='font-size:14px'><span class='chip brand'>${mName(e.actor)}</span> ${esc(e.text)}</div>
+        <div class='muted' style='font-size:12px;white-space:nowrap'>${timeAgo(e.ts)}</div>
+      </div>`).join('') || "<div class='muted'>暂无动态</div>"}
+    </div>`;
 }
 function ownerBadge(oid) {
   if (!oid) return '<span class="chip red">⚠ 待指派责任人</span>';
@@ -1581,7 +1607,7 @@ function applyAuth(d) {
     toast("欢迎，" + (d.displayName || d.user) + getRoleLabel(d.role) + (hint ? "：" + hint : ""));
     const open = new URLSearchParams(location.search).get("open");
     if (open) { const [c, id] = open.split("/"); openLinkedItem(c, id); }
-  }).catch(() => showLogin("登录状态无效，请重新登录"));
+  }).catch(onLoadFail);
 }
 
 function getRoleLabel(role) {
@@ -1697,7 +1723,7 @@ if (!state.token) {
     connectWS();
     const open = new URLSearchParams(location.search).get("open");
     if (open) { const [c, id] = open.split("/"); openLinkedItem(c, id); }
-  }).catch(() => showLogin("登录状态无效，请重新登录"));
+  }).catch(onLoadFail);
 }
 
 // ---------- 移动端侧边栏抽屉 ----------
