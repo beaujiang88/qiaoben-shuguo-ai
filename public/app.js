@@ -177,6 +177,7 @@ function openModal(title, bodyHTML) {
   $("#modalTitle").textContent = title;
   $("#modalBody").innerHTML = bodyHTML;
   $("#modal").classList.remove("hidden");
+  applyReadonly();
 }
 function closeModal() { $("#modal").classList.add("hidden"); }
 $("#modalClose").onclick = closeModal;
@@ -265,6 +266,7 @@ function render() {
   const main = $("#main");
   const fns = { overview: renderOverview, plans: renderPlans, proposals: renderProposals, progress: renderProgress, feedback: renderFeedback, customers: renderCustomers, media: renderMedia, team: renderTeam, collab: renderCollab, resources: renderResources, aidesk: renderAIDesk, docs: renderDocs, activity: renderActivity };
   (fns[r] || renderOverview)(main);
+  applyReadonly();
 }
 
 // ---------- 各模块 ----------
@@ -1034,17 +1036,27 @@ window.openLinkedItem = async (col, id) => {
   } catch (e) { toast("打开失败：" + e.message); }
 };
 window.openRename = () => {
-  openModal("✏️ 修改名字", `<p class="muted">显示名可随时改；改 WorkBuddy 名字（身份）会同步重命名你的历史贡献归属。</p>
+  const approved = state.canEdit;
+  const title = approved ? "✏️ 修改名字" : "✏️ 修改名字并提交申请";
+  const note = approved
+    ? `<p class="muted">显示名可随时改；改 WorkBuddy 名字（身份）会同步重命名你的历史贡献归属。</p>`
+    : `<p class="muted">你当前为<b>只读（未审批）</b>状态，不能删除 / 编辑 / 下载 / 转发 / 推送。修改名字并点击下方「提交申请」即向管理员申请操作权限，审批通过后将解锁全部操作。</p>`;
+  const btnLabel = approved ? "保存" : "提交申请";
+  openModal(title, `${note}
     <div class="field"><label>当前 WorkBuddy 名字</label><div class="muted">@${esc(state.authUser)}</div></div>
     <div class="field"><label>新显示名（可选）</label><input id="rnDisplay" class="login-input" value="${esc(state.authUser)}" placeholder="显示名"></div>
     <div class="field"><label>新 WorkBuddy 名字（可选，身份）</label><input id="rnName" class="login-input" placeholder="如：beau2"></div>
-    <div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" id="rnGo">保存</button></div>`);
+    <div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" id="rnGo">${btnLabel}</button></div>`);
   $("#rnGo").onclick = async () => {
     const displayName = ($("#rnDisplay").value || "").trim();
     const newUsername = ($("#rnName").value || "").trim();
     if (!displayName && !newUsername) return closeModal();
-    try { const d = await api("POST", "/me/rename", { displayName, newUsername }); applyAuth(d); closeModal(); toast("已更新：" + (d.changedName ? "身份 @" + d.user : "显示名 " + d.displayName)); }
-    catch (e) {}
+    try {
+      const d = await api("POST", "/me/rename", { displayName, newUsername });
+      applyAuth(d);
+      closeModal();
+      toast(approved ? ("已更新：" + (d.changedName ? "身份 @" + d.user : "显示名 " + d.displayName)) : "已提交申请，等待管理员审批（当前仍为只读）");
+    } catch (e) {}
   };
 };
 window.openPushCenter = () => {
@@ -1642,11 +1654,24 @@ function renderAuthBadge() {
   btns += `<button class="auth-btn" onclick="openInbox()">📥 收件箱${state.inboxUnread ? `<span class="badge-dot">${state.inboxUnread}</span>` : ""}</button>`;
   if (state.role === "admin") btns += `<button class="auth-btn" onclick="showApprovalPanel()">📋 审批</button>`;
   if (state.canEdit) btns += `<button class="auth-btn" onclick="openPushCenter()">📤 推送</button>`;
-  if (!state.canEdit && state.authUser) btns += `<button class="auth-btn auth-warn" onclick="applyForAccess()">📝 申请编辑权限</button>`;
+  if (!state.canEdit && state.authUser) btns += `<button class="auth-btn auth-warn" onclick="openRename()">📝 提交申请</button>`;
   btns += `<button class="auth-btn" onclick="openRename()">✏️ 改名</button>`;
   btns += `<button class="auth-logout" onclick="doLogout()">退出</button>`;
   el.innerHTML = `<span class="auth-user">${esc(state.authUser)}</span><span class="auth-role ${state.canEdit ? 'ed' : 'ro'}">${roleTxt}</span>${btns}`;
   document.body.classList.toggle("readonly", !state.canEdit);
+  applyReadonly();
+}
+
+// 只读（未审批）模式：隐藏所有操作类按钮（删除 / 编辑 / 下载 / 转发 / 推送 / 领取 / 转让等），仅保留查看
+function applyReadonly() {
+  const banner = document.getElementById("roBanner");
+  if (banner) banner.classList.toggle("hidden", state.canEdit);
+  if (state.canEdit) return;
+  const RE = /(openPlanForm|openPropForm|openMediaForm|openTaskForm|openFeedbackForm|openCustomerForm|openFollowForm|openReportForm|openMemberForm|openExpertForm|openToolForm|openAITaskForm|openDocForm|openTransferModal|claimTask|del\(|openForwardModal|openPushModal|saveAsTask|openPushCenter|openInvite|sendChat)/;
+  document.querySelectorAll("button[onclick],a[onclick]").forEach(el => {
+    if (RE.test(el.getAttribute("onclick") || "")) el.style.display = "none";
+  });
+  document.querySelectorAll("a[download]").forEach(el => { el.style.display = "none"; });
 }
 
 // ---------- 启动 ----------

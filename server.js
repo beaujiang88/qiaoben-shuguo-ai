@@ -362,6 +362,17 @@ function ensureMember(username, displayName) {
   return id;
 }
 
+// 确保某用户有一条待审批的访问申请（不存在则创建），返回该申请
+function ensurePendingRequest(username, displayName) {
+  let ar = getCol("accessRequests").find(a => a.username === username && a.status === "pending");
+  if (!ar) {
+    ar = { id: "ar_" + nanoid(8), username, displayName: displayName || username, reason: "", status: "pending", requestedAt: Date.now(), reviewedBy: null, reviewedAt: null };
+    DB.accessRequests.push(ar);
+    saveDB(DB);
+  }
+  return ar;
+}
+
 // 申请加入（公开）：输入 WorkBuddy 名字即身份，自动建号 + 申请访问
 // 老用户直接登录；新用户建号并进入只读，待管理员审批后获得编辑权限
 app.post("/api/join", (req, res) => {
@@ -379,15 +390,10 @@ app.post("/api/join", (req, res) => {
   } else {
     ensureMember(name, user.displayName);
   }
-  // 申请访问状态
+  // 申请访问状态：新成员（role=user）自动建一条待审批申请
   let requestStatus = user.role !== "user" ? "approved" : null;
   if (user.role === "user") {
-    let ar = getCol("accessRequests").find(a => a.username === name && a.status === "pending");
-    if (!ar) {
-      ar = { id: "ar_" + nanoid(8), username: name, displayName: user.displayName, reason: "", status: "pending", requestedAt: Date.now(), reviewedBy: null, reviewedAt: null };
-      DB.accessRequests.push(ar);
-      saveDB(DB);
-    }
+    ensurePendingRequest(name, user.displayName);
     requestStatus = "pending";
   }
   const token = makeToken(name, user.role);
@@ -483,8 +489,14 @@ app.post("/api/me/rename", (req, res) => {
     changedName = true;
   }
   saveDB(DB);
+  // 未审批（user 角色）用户：修改名字即（重新）向管理员提交访问申请
+  let requestStatus = user.role !== "user" ? "approved" : null;
+  if (user.role === "user") {
+    ensurePendingRequest(user.username, user.displayName);
+    requestStatus = "pending";
+  }
   const token = makeToken(user.username, user.role);
-  res.json({ token, user: user.username, role: user.role, displayName: user.displayName, changedName });
+  res.json({ token, user: user.username, role: user.role, displayName: user.displayName, changedName, requestStatus });
 });
 
 // 推送（编辑/管理员）：把某条目推送给指定成员，进入对方收件箱
@@ -728,10 +740,12 @@ app.post("/api/aiTasks/:id/autorun", (req, res) => {
 
 // 导出 / 导入（分享与备份）
 app.get("/api/export", (req, res) => {
+  if (!["editor", "admin"].includes(req.auth?.role)) return res.status(403).json({ error: "仅协作者/管理员可导出数据" });
   res.setHeader("Content-Disposition", "attachment; filename=qiaoben-shuguo-export.json");
   res.json(DB);
 });
 app.post("/api/import", (req, res) => {
+  if (req.auth?.role !== "admin") return res.status(403).json({ error: "仅管理员可导入数据" });
   DB = { ...seed(), ...req.body };
   for (const c of COLLECTIONS) if (!DB[c]) DB[c] = [];
   saveDB(DB);

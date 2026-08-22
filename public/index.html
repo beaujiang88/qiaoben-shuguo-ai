@@ -22,7 +22,7 @@
           onkeydown="if(event.key==='Enter')doJoin()" />
       </div>
       <button class="btn btn-primary login-btn" onclick="doJoin()">申请访问 / 进入</button>
-      <div class="login-note">输入名字即身份：新成员默认只读，申请后由管理员审批通过即可编辑数据。</div>
+      <div class="login-note">输入名字即身份：新成员默认只读，在右上角「✏️ 改名」里改名字并提交申请，管理员审批通过即可编辑数据。</div>
     </div>
   </div>
 
@@ -45,6 +45,8 @@
       <button id="shareBtn" class="btn btn-primary" onclick="openInvite()">↗ 分享 / 转发</button>
     </div>
   </header>
+
+  <div id="roBanner" class="ro-banner hidden">🔒 权限审批中：当前为<b>只读</b>，不可进行任何操作（删除 / 编辑 / 下载 / 转发 / 推送均不可用）。在右上角「✏️ 改名」里修改名字并点击「提交申请」，管理员审批通过后将解锁全部操作权限。</div>
 
   <div id="navBackdrop" class="nav-backdrop"></div>
 

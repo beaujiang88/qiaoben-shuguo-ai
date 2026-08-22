@@ -193,6 +193,12 @@ tr:hover td{background:#fbfbff}
 .auth-logout{font-size:11px;padding:3px 8px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink2)}
 body.readonly .buddy-fab{display:none}
 body.readonly #shareBtn{display:none}
+body.readonly .btn-danger{display:none!important}
+body.readonly a[download]{display:none!important}
+
+/* 只读（未审批）横幅 */
+.ro-banner{display:block;background:linear-gradient(135deg,#fff4e5,#ffe7cf);color:#9a4e12;border-bottom:1px solid #ffd6a8;padding:9px 16px;font-size:13px;line-height:1.5}
+.ro-banner.hidden{display:none!important}
 
 /* 注册/登录 Tab 切换 */
 .auth-tabs{display:flex;gap:0;margin-bottom:14px;background:var(--bg);border-radius:10px;padding:3px}
