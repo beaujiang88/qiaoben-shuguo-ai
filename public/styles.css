@@ -197,8 +197,10 @@ body.readonly .btn-danger{display:none!important}
 body.readonly a[download]{display:none!important}
 
 /* 只读（未审批）横幅 */
-.ro-banner{display:block;background:linear-gradient(135deg,#fff4e5,#ffe7cf);color:#9a4e12;border-bottom:1px solid #ffd6a8;padding:9px 16px;font-size:13px;line-height:1.5}
+.ro-banner{display:block;background:linear-gradient(135deg,#fff4e5,#ffe7cf);color:#9a4e12;border-bottom:1px solid #ffd6a8;padding:9px 36px 9px 16px;font-size:13px;line-height:1.5;position:relative}
 .ro-banner.hidden{display:none!important}
+.ro-close{position:absolute;right:10px;top:50%;transform:translateY(-50%);cursor:pointer;font-size:14px;opacity:.6;padding:2px 6px;border-radius:6px}
+.ro-close:hover{opacity:1;background:rgba(154,78,18,.12)}
 
 /* 注册/登录 Tab 切换 */
 .auth-tabs{display:flex;gap:0;margin-bottom:14px;background:var(--bg);border-radius:10px;padding:3px}

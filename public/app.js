@@ -27,7 +27,7 @@ const state = {
   token: localStorage.getItem("qb_token") || "",
   authUser: localStorage.getItem("qb_user") || "",
   role: localStorage.getItem("qb_role") || "",
-  canEdit: (localStorage.getItem("qb_role") || "") === "editor",
+  canEdit: ["editor", "admin"].includes((localStorage.getItem("qb_role") || "")),
   inbox: [], inboxUnread: 0,
 };
 const COLS = ["members", "plans", "tasks", "proposals", "feedback", "customers", "experts", "tools", "aiTasks", "docs", "events", "followups", "reports", "media", "messages", "badges"];
@@ -1665,7 +1665,11 @@ function renderAuthBadge() {
 // 只读（未审批）模式：隐藏所有操作类按钮（删除 / 编辑 / 下载 / 转发 / 推送 / 领取 / 转让等），仅保留查看
 function applyReadonly() {
   const banner = document.getElementById("roBanner");
-  if (banner) banner.classList.toggle("hidden", state.canEdit);
+  const dismissed = localStorage.getItem("qb_ro_dismissed") === "1";
+  if (banner) {
+    if (state.canEdit) localStorage.removeItem("qb_ro_dismissed"); // 审批通过后清掉记忆
+    banner.classList.toggle("hidden", state.canEdit || dismissed);
+  }
   if (state.canEdit) return;
   const RE = /(openPlanForm|openPropForm|openMediaForm|openTaskForm|openFeedbackForm|openCustomerForm|openFollowForm|openReportForm|openMemberForm|openExpertForm|openToolForm|openAITaskForm|openDocForm|openTransferModal|claimTask|del\(|openForwardModal|openPushModal|saveAsTask|openPushCenter|openInvite|sendChat)/;
   document.querySelectorAll("button[onclick],a[onclick]").forEach(el => {
@@ -1673,6 +1677,13 @@ function applyReadonly() {
   });
   document.querySelectorAll("a[download]").forEach(el => { el.style.display = "none"; });
 }
+
+// 收起只读提示横幅（本次记住，审批通过前不再自动弹出）
+window.dismissRoBanner = () => {
+  const b = document.getElementById("roBanner");
+  if (b) b.classList.add("hidden");
+  localStorage.setItem("qb_ro_dismissed", "1");
+};
 
 // ---------- 启动 ----------
 if (!state.token) {
