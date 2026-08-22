@@ -7,6 +7,20 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <!-- 登录层（访问控制） -->
+  <div id="loginBox" class="login-box hidden">
+    <div class="login-card">
+      <div class="login-logo" style="background:url('baofu-mao.png') center/cover"></div>
+      <div class="login-title">乔本·数果 AI 工作台</div>
+      <div id="loginTip" class="login-tip">请输入协作者账号登录后使用</div>
+      <input id="loginUser" class="login-input" placeholder="用户名（如 beau / zhao）" autocomplete="username" />
+      <input id="loginPass" class="login-input" type="password" placeholder="访问口令" autocomplete="current-password"
+        onkeydown="if(event.key==='Enter')doLogin()" />
+      <button class="btn btn-primary login-btn" onclick="doLogin()">登 录</button>
+      <div class="login-note">协作者（编辑）名单内成员可修改数据；其他登录用户仅只读。</div>
+    </div>
+  </div>
+
   <header class="topbar">
     <div class="brand">
       <span class="logo" style="background:url('baofu-mao.png') center/contain no-repeat;display:inline-block;width:32px;height:32px;border-radius:8px"></span>
@@ -19,6 +33,7 @@
       <input id="globalSearch" placeholder="🔍 全局搜索：方案 / 客户 / 任务 / 文档…" />
     </div>
     <div class="top-actions">
+      <div id="authBadge" class="auth-badge"></div>
       <div id="presence" class="presence" title="在线成员"></div>
       <select id="userSwitch" class="user-switch" title="切换当前操作者"></select>
       <button id="shareBtn" class="btn btn-primary">↗ 分享 / 转发</button>

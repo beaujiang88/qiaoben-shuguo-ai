@@ -1,6 +1,7 @@
 // 乔本·数果 AI 肠道健康管理项目 — 后端服务
 // Node + Express + ws；JSON 文件做共享数据库；WebSocket 做实时多人同步
 import express from "express";
+import crypto from "crypto";
 import { WebSocketServer } from "ws";
 import { nanoid } from "nanoid";
 import http from "http";
@@ -251,6 +252,55 @@ function mutate(c, action, data, actor) {
 const app = express();
 app.use(express.json({ limit: "5mb" }));
 app.use(express.static(PUBLIC_DIR));
+
+// ---------- 访问控制（登录 + 协作者白名单） ----------
+// 共享访问口令：所有协作者用它登录系统（可通过环境变量覆盖，生产务必修改）
+const ACCESS_PASS = process.env.ACCESS_PASS || "qiaoben2026";
+// 协作者（编辑）白名单：名单内的用户名可修改数据；其他登录用户仅只读
+const EDITORS = (process.env.EDITORS || "beau,zhao,lin,qian").split(",").map(s => s.trim()).filter(Boolean);
+const AUTH_SECRET = process.env.AUTH_SECRET || "qiaoben-shuguo-ai-secret-2026";
+const TOKEN_TTL = 1000 * 60 * 60 * 24 * 7; // 7 天
+
+function makeToken(user, role) {
+  const payload = Buffer.from(JSON.stringify({ user, role, exp: Date.now() + TOKEN_TTL })).toString("base64url");
+  const sig = crypto.createHmac("sha256", AUTH_SECRET).update(payload).digest("base64url");
+  return payload + "." + sig;
+}
+function verifyToken(tok) {
+  if (!tok) return null;
+  const [p, s] = tok.split(".");
+  if (!p || !s) return null;
+  const sig = crypto.createHmac("sha256", AUTH_SECRET).update(p).digest("base64url");
+  if (sig !== s) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(p, "base64url").toString());
+    if (payload.exp < Date.now()) return null;
+    return payload;
+  } catch { return null; }
+}
+
+// 登录接口（公开）
+app.post("/api/login", (req, res) => {
+  const { user, pass } = req.body || {};
+  if (!user || pass !== ACCESS_PASS) return res.status(401).json({ error: "用户名或访问口令错误" });
+  const role = EDITORS.includes(String(user).trim()) ? "editor" : "viewer";
+  res.json({ token: makeToken(String(user).trim(), role), user: String(user).trim(), role });
+});
+
+// 鉴权中间件：所有 /api/* 都需登录；写操作（POST/PUT/DELETE/PATCH）需 editor 角色
+app.use("/api", (req, res, next) => {
+  const p = req.path;
+  if (p === "/login" || p === "/presence") return next(); // 登录与在线状态公开
+  const auth = req.headers["authorization"] || "";
+  const tok = auth.startsWith("Bearer ") ? auth.slice(7) : null;
+  const payload = verifyToken(tok);
+  if (!payload) return res.status(401).json({ error: "未登录或登录已过期，请重新登录" });
+  req.auth = payload;
+  if (["POST", "PUT", "DELETE", "PATCH"].includes(req.method) && payload.role !== "editor") {
+    return res.status(403).json({ error: "无修改权限：仅协作者（编辑）名单内成员可修改数据" });
+  }
+  next();
+});
 
 // 通用集合路由
 for (const col of COLLECTIONS) {

@@ -24,6 +24,10 @@ const state = {
   user: "m_beau",
   query: "",
   route: "overview",
+  token: localStorage.getItem("qb_token") || "",
+  authUser: localStorage.getItem("qb_user") || "",
+  role: localStorage.getItem("qb_role") || "",
+  canEdit: (localStorage.getItem("qb_role") || "") === "editor",
 };
 const COLS = ["members", "plans", "tasks", "proposals", "feedback", "customers", "experts", "tools", "aiTasks", "docs", "events", "followups", "reports", "media", "messages", "badges"];
 const TASK_CATS = ["产品规划", "技术开发", "市场招商", "门店运营", "内容生产", "培训考核", "合规风控", "客户服务"];
@@ -118,10 +122,28 @@ window.chatAIAssist = () => {
 
 // ---------- API ----------
 async function api(method, path, body) {
+  // 写操作：非编辑角色在客户端先拦截（服务端也会硬拦截）
+  if (["POST", "PUT", "DELETE", "PATCH"].includes(method) && !state.canEdit) {
+    toast("无修改权限：仅协作者（编辑）名单内成员可修改数据");
+    throw new Error("read-only");
+  }
+  const headers = { "Content-Type": "application/json" };
+  if (state.token) headers["Authorization"] = "Bearer " + state.token;
   const res = await fetch("/api" + path, {
-    method, headers: { "Content-Type": "application/json" },
+    method, headers,
     body: body ? JSON.stringify({ ...body, _actor: state.user }) : undefined,
   });
+  if (res.status === 401) {
+    // 登录过期或无效 → 清本地凭据并弹出登录层
+    localStorage.removeItem("qb_token"); localStorage.removeItem("qb_user"); localStorage.removeItem("qb_role");
+    state.token = ""; state.authUser = ""; state.role = ""; state.canEdit = false;
+    showLogin("登录已过期，请重新登录");
+    throw new Error("unauthorized");
+  }
+  if (res.status === 403) {
+    toast("无修改权限：仅协作者（编辑）名单内成员可修改数据");
+    throw new Error(await res.text());
+  }
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -1415,11 +1437,56 @@ function renderPresence(members) {
   $("#presence").innerHTML = uniq.map(m => `<div class="av" title="${esc(m.name)} 在线" style="background:${mColor(m.id)}">${esc(m.name[0])}</div>`).join("") + `<span class="muted" style="font-size:12px;margin-left:6px">${uniq.length} 在线</span>`;
 }
 
+// ---------- 登录与权限 ----------
+function showLogin(msg) {
+  const box = $("#loginBox");
+  if (!box) return;
+  box.classList.remove("hidden");
+  const tip = $("#loginTip");
+  if (tip) tip.textContent = msg || "请输入协作者账号登录后使用";
+  const u = $("#loginUser"), p = $("#loginPass");
+  if (u) u.focus();
+}
+async function doLogin() {
+  const u = ($("#loginUser").value || "").trim();
+  const p = ($("#loginPass").value || "");
+  if (!u || !p) return toast("请输入用户名和访问口令");
+  try {
+    const res = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user: u, pass: p }) });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); return toast(e.error || "登录失败"); }
+    const d = await res.json();
+    localStorage.setItem("qb_token", d.token); localStorage.setItem("qb_user", d.user); localStorage.setItem("qb_role", d.role);
+    state.token = d.token; state.authUser = d.user; state.role = d.role; state.canEdit = d.role === "editor";
+    $("#loginBox").classList.add("hidden");
+    renderAuthBadge();
+    await loadAll();
+    connectWS();
+    toast("登录成功，欢迎 " + d.user + (d.role === "editor" ? "（编辑）" : "（只读）"));
+  } catch (e) { toast("登录请求失败：" + e.message); }
+}
+function doLogout() {
+  localStorage.removeItem("qb_token"); localStorage.removeItem("qb_user"); localStorage.removeItem("qb_role");
+  location.reload();
+}
+function renderAuthBadge() {
+  const el = $("#authBadge");
+  if (!el) return;
+  if (!state.authUser) { el.innerHTML = ""; return; }
+  const roleTxt = state.canEdit ? "编辑" : "只读";
+  el.innerHTML = `<span class="auth-user">${esc(state.authUser)}</span><span class="auth-role ${state.canEdit ? "ed" : "ro"}">${roleTxt}</span><button class="auth-logout" onclick="doLogout()">退出</button>`;
+  document.body.classList.toggle("readonly", !state.canEdit);
+}
+
 // ---------- 启动 ----------
-loadAll().then(() => {
-  connectWS();
-  if (new URLSearchParams(location.search).get("join")) openJoin();
-});
+if (!state.token) {
+  showLogin("请输入协作者账号登录后使用");
+} else {
+  loadAll().then(() => {
+    renderAuthBadge();
+    connectWS();
+    if (new URLSearchParams(location.search).get("join")) openJoin();
+  }).catch(() => showLogin("登录状态无效，请重新登录"));
+}
 
 // ---------- 助理Buddy 悬浮助手 ----------
 window.buddyQuick = (text) => { const el = $("#buddyInput"); if (el) { el.value = text; el.focus(); } };
