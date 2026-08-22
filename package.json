@@ -1,0 +1,15 @@
+{
+  "name": "qiaoben-shuguo-ai",
+  "version": "1.0.0",
+  "description": "乔本·数果 AI 肠道健康管理项目 — 知识库式多人协作工作台",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.18.0",
+    "nanoid": "^5.0.7"
+  }
+}

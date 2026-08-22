@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>乔本·数果 AI 肠道健康管理 — 工作台</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" style="background:url('baofu-mao.png') center/contain no-repeat;display:inline-block;width:32px;height:32px;border-radius:8px"></span>
+      <div>
+        <div class="brand-title">乔本·数果 <b>AI</b> 肠道健康管理</div>
+        <div class="brand-sub">知识库式多人协作工作台</div>
+      </div>
+    </div>
+    <div class="search">
+      <input id="globalSearch" placeholder="🔍 全局搜索：方案 / 客户 / 任务 / 文档…" />
+    </div>
+    <div class="top-actions">
+      <div id="presence" class="presence" title="在线成员"></div>
+      <select id="userSwitch" class="user-switch" title="切换当前操作者"></select>
+      <button id="shareBtn" class="btn btn-primary">↗ 分享 / 转发</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <nav id="nav"></nav>
+      <div class="sidebar-foot">
+        <div id="connState" class="conn">● 连接中…</div>
+      </div>
+    </aside>
+    <main id="main" class="main"></main>
+  </div>
+
+  <!-- 通用弹窗 -->
+  <div id="modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><span id="modalTitle"></span><button id="modalClose" class="x">✕</button></div>
+      <div id="modalBody" class="modal-body"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <!-- AI 协助弹窗（独立于主弹窗，生成结果回填到表单） -->
+  <div id="aiModal" class="modal hidden" style="z-index:60">
+    <div class="modal-card" style="width:min(560px,92vw)">
+      <div class="modal-head"><span id="aiModalTitle">🤖 AI 协助</span><button class="x" onclick="document.getElementById('aiModal').classList.add('hidden')">✕</button></div>
+      <div id="aiModalBody" class="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- 助理Buddy 悬浮助手 -->
+  <div id="buddyFab" class="buddy-fab" title="助理Buddy · 指派 AI 任务" style="background:url('baofu-mao.png') center/cover;border-radius:50%;box-shadow:0 10px 28px rgba(124,92,255,.45),0 0 0 3px rgba(124,92,255,.2)"></div>
+  <div id="buddyPanel" class="buddy-panel hidden">
+    <div class="buddy-head" style="background:linear-gradient(135deg,#7c5cff,#5b8def);display:flex;align-items:center;gap:10px"><div style="width:36px;height:36px;border-radius:50%;background:url('baofu-mao.png') center/cover;flex-shrink:0;border:2px solid rgba(255,255,255,.4)"></div><span>🐷 助理Buddy</span><button id="buddyClose" class="x">✕</button></div>
+    <div class="buddy-body">
+      <div class="muted" style="font-size:12px;margin-bottom:8px">用一句话指派任务，AI 直通主对话（猪猪侠）直接执行。</div>
+      <textarea id="buddyInput" placeholder="例如：帮我写一份门店肠道测评 SOP…"></textarea>
+      <div class="row" style="gap:6px;flex-wrap:wrap;margin:8px 0">
+        <button class="btn btn-sm" onclick="buddyQuick('帮我写一份肠道健康管理项目方案')">✍️ 写方案</button>
+        <button class="btn btn-sm" onclick="buddyQuick('汇总本周客户随访与检测指标变化')">📊 做分析</button>
+        <button class="btn btn-sm" onclick="buddyQuick('生成一条肠道健康科普短视频脚本')">🎬 生成脚本</button>
+      </div>
+      <button class="btn btn-primary" id="buddyAssign" style="width:100%">🚀 指派并执行</button>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
