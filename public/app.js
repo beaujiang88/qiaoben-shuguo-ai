@@ -1553,11 +1553,13 @@ function showLogin(msg) {
 async function doJoin() {
   const u = ($("#joinName").value || "").trim();
   const dn = ($("#joinDisplay").value || "").trim();
+  const pw = ($("#joinPw").value || "").trim();
   if (!u || u.length < 2) return toast("名字至少 2 个字符");
+  if (!pw) return toast("请输入密码");
   try {
-    const res = await fetch("/api/join", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: u, displayName: dn || u }) });
+    const res = await fetch("/api/join", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: u, displayName: dn || u, password: pw }) });
     const d = await res.json().catch(() => ({}));
-    if (!res.ok) return toast(d.error || "加入失败");
+    if (!res.ok) return toast(d.error || "登录失败");
     applyAuth(d);
   } catch (e) { toast("请求失败：" + e.message); }
 }

@@ -278,6 +278,9 @@ app.get("/api/health", (req, res) => res.json({ ok: true, ts: Date.now() }));
 // 管理员列表：初始管理员可通过环境变量覆盖
 const ADMIN_USERS = (process.env.ADMIN_USERS || "beau").split(",").map(s => s.trim()).filter(Boolean);
 const AUTH_SECRET = process.env.AUTH_SECRET || "qiaoben-shuguo-ai-secret-2026";
+// 登录密码（可用环境变量覆盖；部署时建议覆盖默认弱密码）
+const MEMBER_PASSWORD = process.env.MEMBER_PASSWORD || "qbsh2026@";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "3612047Beau";
 const TOKEN_TTL = 1000 * 60 * 60 * 24 * 7; // 7 天
 
 function makeToken(user, role) {
@@ -300,6 +303,43 @@ function verifyToken(tok) {
 function getUserRole(username) {
   const u = getCol("users").find(x => x.username === username);
   return u ? u.role : null;
+}
+
+// 统一登录：名字 + 密码
+//  - 管理员账号（ADMIN_USERS）+ 管理员密码 → admin，直接获得全部权限（免审批）
+//  - 成员：任意名字 + 成员密码 → role=user（只读，自动建号并提交待审批申请）
+//  - 已认证成员（editor/admin）用成员密码登录 → 维持其已有权限
+//  - 其余 → 401
+function tryLogin(username, password, displayName) {
+  const name = String(username || "").trim();
+  if (!name || name.length < 2) { const e = new Error("名字至少 2 个字符"); e.status = 400; throw e; }
+  if (!password) { const e = new Error("请输入密码"); e.status = 400; throw e; }
+  const isAdminName = ADMIN_USERS.includes(name);
+  let role;
+  if (isAdminName) {
+    if (password === ADMIN_PASSWORD) role = "admin";
+    else { const e = new Error("管理员密码错误"); e.status = 401; throw e; }
+  } else {
+    const existing = getCol("users").find(u => u.username === name);
+    if (existing && ["editor", "admin"].includes(existing.role)) role = existing.role; // 已认证，维持
+    else if (password === MEMBER_PASSWORD) role = "user";
+    else { const e = new Error("密码错误"); e.status = 401; throw e; }
+  }
+  let user = getCol("users").find(u => u.username === name);
+  let changed = false;
+  if (!user) {
+    user = { id: "u_" + nanoid(6), username: name, displayName: String(displayName || name).trim() || name, role, createdAt: Date.now() };
+    DB.users.push(user);
+    changed = true;
+  } else if (role === "admin" && user.role !== "admin") {
+    user.role = "admin"; changed = true;
+  }
+  if (changed) saveDB(DB);
+  ensureMember(name, user.displayName);
+  let requestStatus = role !== "user" ? "approved" : null;
+  if (role === "user") { ensurePendingRequest(name, user.displayName); requestStatus = "pending"; }
+  const token = makeToken(name, role);
+  return { token, user: name, role, displayName: user.displayName, requestStatus, created: changed };
 }
 
 // 鉴权中间件：所有 /api/* 都需登录；写操作需 editor/admin 角色；审批操作在路由层单独校验
@@ -328,28 +368,16 @@ app.use("/api", (req, res, next) => {
   next();
 });
 
-// 注册（公开）：用 WorkBuddy 注册名创建账号
+// 注册（公开）：名字 + 固定密码，自动建号并以只读身份登录；已存在则直接登录
 app.post("/api/register", (req, res) => {
-  const { username, displayName } = req.body || {};
-  const name = String(username || "").trim();
-  if (!name || name.length < 2) return res.status(400).json({ error: "用户名至少 2 个字符" });
-  if (getCol("users").find(u => u.username === name)) return res.status(409).json({ error: "用户名已被注册" });
-  const user = { id: "u_" + nanoid(6), username: name, displayName: String(displayName || name).trim(), role: "user", createdAt: Date.now() };
-  DB.users.push(user);
-  saveDB(DB);
-  const token = makeToken(name, "user");
-  res.json({ token, user: name, role: "user", message: "注册成功，已以只读身份登录" });
+  try { res.json(tryLogin(req.body?.username, req.body?.password, req.body?.displayName)); }
+  catch (e) { res.status(e.status || 400).json({ error: e.message }); }
 });
 
-// 登录（公开）：用注册名登录
+// 登录（公开）：名字 + 密码；管理员账号用管理员密码直接获得权限，成员用成员密码进入只读待审批
 app.post("/api/login", (req, res) => {
-  const { username } = req.body || {};
-  const name = String(username || "").trim();
-  if (!name) return res.status(400).json({ error: "请输入用户名" });
-  const user = getCol("users").find(u => u.username === name);
-  if (!user) return res.status(401).json({ error: "用户不存在，请先注册", needRegister: true });
-  const token = makeToken(name, user.role);
-  res.json({ token, user: name, role: user.role, displayName: user.displayName });
+  try { res.json(tryLogin(req.body?.username, req.body?.password, req.body?.displayName)); }
+  catch (e) { res.status(e.status || 400).json({ error: e.message }); }
 });
 
 // 确保某 WorkBuddy 名字对应一个成员（聊天/团队/负责人身份）
@@ -373,31 +401,10 @@ function ensurePendingRequest(username, displayName) {
   return ar;
 }
 
-// 申请加入（公开）：输入 WorkBuddy 名字即身份，自动建号 + 申请访问
-// 老用户直接登录；新用户建号并进入只读，待管理员审批后获得编辑权限
+// 申请加入（公开）：名字 + 固定密码，自动建号 + 申请访问（与登录同一入口，便于分享链接直接进）
 app.post("/api/join", (req, res) => {
-  const { username, displayName } = req.body || {};
-  const name = String(username || "").trim();
-  if (!name || name.length < 2) return res.status(400).json({ error: "名字至少 2 个字符" });
-  let user = getCol("users").find(u => u.username === name);
-  let created = false;
-  if (!user) {
-    user = { id: "u_" + nanoid(6), username: name, displayName: String(displayName || name).trim() || name, role: "user", createdAt: Date.now() };
-    DB.users.push(user);
-    ensureMember(name, user.displayName);
-    created = true;
-    saveDB(DB);
-  } else {
-    ensureMember(name, user.displayName);
-  }
-  // 申请访问状态：新成员（role=user）自动建一条待审批申请
-  let requestStatus = user.role !== "user" ? "approved" : null;
-  if (user.role === "user") {
-    ensurePendingRequest(name, user.displayName);
-    requestStatus = "pending";
-  }
-  const token = makeToken(name, user.role);
-  res.json({ token, user: name, role: user.role, displayName: user.displayName, requestStatus, created });
+  try { res.json(tryLogin(req.body?.username, req.body?.password, req.body?.displayName)); }
+  catch (e) { res.status(e.status || 400).json({ error: e.message }); }
 });
 
 // 申请编辑权限（需登录）
