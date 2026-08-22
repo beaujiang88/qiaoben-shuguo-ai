@@ -18,7 +18,8 @@ const PORT = process.env.PORT || 3088;
 const COLLECTIONS = [
   "members", "plans", "tasks", "proposals", "feedback",
   "customers", "experts", "tools", "aiTasks", "docs", "events",
-  "followups", "reports", "media", "messages", "badges"
+  "followups", "reports", "media", "messages", "badges",
+  "users", "accessRequests"
 ];
 
 function seed() {
@@ -208,7 +209,16 @@ function seed() {
     { id: "b_3", memberId: "m_zhao", tier: "bronze", icon: "🤝", name: "客户连接者", desc: "成功招募 12 名试点客户", earnedAt: now - 60000000, category: "运营" },
     { id: "b_4", memberId: "m_beau", tier: "diamond", icon: "⚡", name: "AI 先驱", desc: "首次使用 AI 自动执行并回写数据", earnedAt: now - 3600000, category: "创新" },
   ];
-  return { members, plans, tasks, proposals, feedback, customers, experts, tools, aiTasks, docs, events, followups, reports, media, messages, badges, meta: { project: "乔本·数果 AI 肠道健康管理项目", createdAt: now } };
+
+  // 用户系统：注册名 + 角色（user/editor/admin）
+  const users = [
+    { id: "u_beau", username: "beau", displayName: "beau（乔本）", role: "admin", createdAt: now },
+  ];
+
+  // 访问申请：用户申请编辑权限，管理员审批
+  const accessRequests = [];
+
+  return { members, plans, tasks, proposals, feedback, customers, experts, tools, aiTasks, docs, events, followups, reports, media, messages, badges, users, accessRequests, meta: { project: "乔本·数果 AI 肠道健康管理项目", createdAt: now } };
 }
 
 function loadDB() {
@@ -251,13 +261,13 @@ function mutate(c, action, data, actor) {
 // ---------- Express ----------
 const app = express();
 app.use(express.json({ limit: "5mb" }));
+// DEBUG: log all API requests
+app.use("/api", (req, res, next) => { console.log(`[REQ] ${req.method} ${req.path}`); next(); });
 app.use(express.static(PUBLIC_DIR));
 
-// ---------- 访问控制（登录 + 协作者白名单） ----------
-// 共享访问口令：所有协作者用它登录系统（可通过环境变量覆盖，生产务必修改）
-const ACCESS_PASS = process.env.ACCESS_PASS || "qiaoben2026";
-// 协作者（编辑）白名单：名单内的用户名可修改数据；其他登录用户仅只读
-const EDITORS = (process.env.EDITORS || "beau,zhao,lin,qian").split(",").map(s => s.trim()).filter(Boolean);
+// ---------- 访问控制（注册 + 申请 → 审批） ----------
+// 管理员列表：初始管理员可通过环境变量覆盖
+const ADMIN_USERS = (process.env.ADMIN_USERS || "beau").split(",").map(s => s.trim()).filter(Boolean);
 const AUTH_SECRET = process.env.AUTH_SECRET || "qiaoben-shuguo-ai-secret-2026";
 const TOKEN_TTL = 1000 * 60 * 60 * 24 * 7; // 7 天
 
@@ -278,29 +288,116 @@ function verifyToken(tok) {
     return payload;
   } catch { return null; }
 }
+function getUserRole(username) {
+  const u = getCol("users").find(x => x.username === username);
+  return u ? u.role : null;
+}
 
-// 登录接口（公开）
-app.post("/api/login", (req, res) => {
-  const { user, pass } = req.body || {};
-  if (!user || pass !== ACCESS_PASS) return res.status(401).json({ error: "用户名或访问口令错误" });
-  const role = EDITORS.includes(String(user).trim()) ? "editor" : "viewer";
-  res.json({ token: makeToken(String(user).trim(), role), user: String(user).trim(), role });
-});
-
-// 鉴权中间件：所有 /api/* 都需登录；写操作（POST/PUT/DELETE/PATCH）需 editor 角色
+// 鉴权中间件：所有 /api/* 都需登录；写操作需 editor/admin 角色；审批操作在路由层单独校验
+// 注册在「注册/登录」路由之前，确保 apply-access 等需登录接口能先拿到 req.auth
 app.use("/api", (req, res, next) => {
   const p = req.path;
-  if (p === "/login" || p === "/presence") return next(); // 登录与在线状态公开
+  // 公开接口：注册、登录、在线状态
+  if (p === "/register" || p === "/login" || p === "/presence") return next();
   const auth = req.headers["authorization"] || "";
   const tok = auth.startsWith("Bearer ") ? auth.slice(7) : null;
   const payload = verifyToken(tok);
-  if (!payload) return res.status(401).json({ error: "未登录或登录已过期，请重新登录" });
+  if (!payload) { console.log(`[AUTH] ${req.method} ${p} -> 401 no token`); return res.status(401).json({ error: "未登录或登录已过期，请重新登录" }); }
+  // 从数据库取最新角色（审批通过后角色可能已变）
+  const latestRole = getUserRole(payload.user) || payload.role;
+  payload.role = latestRole;
   req.auth = payload;
-  if (["POST", "PUT", "DELETE", "PATCH"].includes(req.method) && payload.role !== "editor") {
-    return res.status(403).json({ error: "无修改权限：仅协作者（编辑）名单内成员可修改数据" });
+  console.log(`[AUTH] ${req.method} ${p} -> user=${payload.user} role=${latestRole}`);
+  // 写操作需要 editor 或 admin；申请/审批类接口由路由层自行校验角色
+  if (["POST", "PUT", "DELETE", "PATCH"].includes(req.method)) {
+    // /apply-access（申请编辑权限）与 /access-requests/*（审批）放行，角色在路由层校验
+    const openWrite = p === "/apply-access" || p.startsWith("/access-requests");
+    if (!openWrite && !["editor", "admin"].includes(latestRole)) {
+      return res.status(403).json({ error: "无修改权限：请先申请并获得编辑权限" });
+    }
   }
   next();
 });
+
+// 注册（公开）：用 WorkBuddy 注册名创建账号
+app.post("/api/register", (req, res) => {
+  const { username, displayName } = req.body || {};
+  const name = String(username || "").trim();
+  if (!name || name.length < 2) return res.status(400).json({ error: "用户名至少 2 个字符" });
+  if (getCol("users").find(u => u.username === name)) return res.status(409).json({ error: "用户名已被注册" });
+  const user = { id: "u_" + nanoid(6), username: name, displayName: String(displayName || name).trim(), role: "user", createdAt: Date.now() };
+  DB.users.push(user);
+  saveDB(DB);
+  const token = makeToken(name, "user");
+  res.json({ token, user: name, role: "user", message: "注册成功，已以只读身份登录" });
+});
+
+// 登录（公开）：用注册名登录
+app.post("/api/login", (req, res) => {
+  const { username } = req.body || {};
+  const name = String(username || "").trim();
+  if (!name) return res.status(400).json({ error: "请输入用户名" });
+  const user = getCol("users").find(u => u.username === name);
+  if (!user) return res.status(401).json({ error: "用户不存在，请先注册", needRegister: true });
+  const token = makeToken(name, user.role);
+  res.json({ token, user: name, role: user.role, displayName: user.displayName });
+});
+
+// 申请编辑权限（需登录）
+app.post("/api/apply-access", (req, res) => {
+  console.log("[APPLY-ACCESS] hit! auth=", !!req.auth, "user=", req.auth?.user, "body=", req.body);
+  const username = req.auth?.user;
+  if (!username) return res.status(401).json({ error: "未登录" });
+  const user = getCol("users").find(u => u.username === username);
+  if (!user) return res.status(404).json({ error: "用户不存在" });
+  if (user.role !== "user") return res.status(400).json({ error: "你已有编辑或管理员权限，无需申请" });
+  // 检查是否已有待审批的申请
+  const existing = getCol("accessRequests").find(a => a.username === username && a.status === "pending");
+  if (existing) return res.status(200).json({ message: "已有待审批的申请", request: existing });
+  const reqObj = { id: "ar_" + nanoid(8), username, displayName: user.displayName, reason: req.body?.reason || "", status: "pending", requestedAt: Date.now(), reviewedBy: null, reviewedAt: null };
+  DB.accessRequests.push(reqObj);
+  saveDB(DB);
+  res.json({ message: "申请已提交，等待管理员审批", request: reqObj });
+});
+
+// 查看待审批列表（仅 admin）
+app.get("/api/access-requests", (req, res) => {
+  if (req.auth?.role !== "admin") return res.status(403).json({ error: "仅管理员可查看" });
+  const pending = getCol("accessRequests").filter(a => a.status === "pending");
+  const all = getCol("accessRequests");
+  res.json({ pending, all });
+});
+
+// 审批通过（仅 admin）
+app.post("/api/access-requests/:id/approve", (req, res) => {
+  if (req.auth?.role !== "admin") return res.status(403).json({ error: "仅管理员可操作" });
+  const ar = find("accessRequests", req.params.id);
+  if (!ar) return res.status(404).json({ error: "申请不存在" });
+  if (ar.status !== "pending") return res.status(400).json({ error: "该申请已处理" });
+  ar.status = "approved";
+  ar.reviewedBy = req.auth.user;
+  ar.reviewedAt = Date.now();
+  // 升级用户角色为 editor
+  const user = getCol("users").find(u => u.username === ar.username);
+  if (user) { user.role = "editor"; }
+  saveDB(DB);
+  res.json({ message: `已批准 ${ar.username} 的编辑权限`, request: ar });
+});
+
+// 审批拒绝（仅 admin）
+app.post("/api/access-requests/:id/reject", (req, res) => {
+  if (req.auth?.role !== "admin") return res.status(403).json({ error: "仅管理员可操作" });
+  const ar = find("accessRequests", req.params.id);
+  if (!ar) return res.status(404).json({ error: "申请不存在" });
+  if (ar.status !== "pending") return res.status(400).json({ error: "该申请已处理" });
+  ar.status = "rejected";
+  ar.reviewedBy = req.auth.user;
+  ar.reviewedAt = Date.now();
+  saveDB(DB);
+  res.json({ message: `已拒绝 ${ar.username} 的编辑权限申请`, request: ar });
+});
+
+// 鉴权中间件已上移至「注册」路由之前（见下方），确保 apply-access 等路由先经过鉴权。
 
 // 通用集合路由
 for (const col of COLLECTIONS) {

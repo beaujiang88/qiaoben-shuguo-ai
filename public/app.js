@@ -124,7 +124,7 @@ window.chatAIAssist = () => {
 async function api(method, path, body) {
   // 写操作：非编辑角色在客户端先拦截（服务端也会硬拦截）
   if (["POST", "PUT", "DELETE", "PATCH"].includes(method) && !state.canEdit) {
-    toast("无修改权限：仅协作者（编辑）名单内成员可修改数据");
+    toast("无修改权限：请先申请并获得编辑权限");
     throw new Error("read-only");
   }
   const headers = { "Content-Type": "application/json" };
@@ -134,7 +134,6 @@ async function api(method, path, body) {
     body: body ? JSON.stringify({ ...body, _actor: state.user }) : undefined,
   });
   if (res.status === 401) {
-    // 登录过期或无效 → 清本地凭据并弹出登录层
     localStorage.removeItem("qb_token"); localStorage.removeItem("qb_user"); localStorage.removeItem("qb_role");
     state.token = ""; state.authUser = ""; state.role = ""; state.canEdit = false;
     showLogin("登录已过期，请重新登录");
@@ -491,7 +490,7 @@ window.aiWriteProposal = () => {
   $("#formSubmit").onclick = async () => {
     const fd = readForm(); if (!fd.title || !fd.prompt) return toast("标题和指令必填");
     const a = await api("POST", "/aiTasks", { title: "撰写方案：" + fd.title, prompt: fd.prompt, linkedType: "proposal", linkedId: "", status: "待处理" });
-    closeModal(); toast("已生成 AI 任务，去任务台交给猪猪侠"); goto("aidesk");
+    closeModal(); toast("已生成 AI 任务，去任务台交给斜杠喵"); goto("aidesk");
   };
 };
 
@@ -933,7 +932,7 @@ function renderTeam(main) {
           </div>`).join("")}
         </div>
         <div class="chat-main">
-          <div class="chat-header"><img src='baofu-mao.png' class='mascot-sm'> ${esc(activeRoom?.name || "聊天")}</div>
+          <div class="chat-header"><img src='mascot-head.png' class='mascot-sm'> ${esc(activeRoom?.name || "聊天")}</div>
           <div class="chat-messages" id="chatMsgBox"></div>
           <div class="chat-input-row">
             <textarea id="chatInput" placeholder="输入消息…（支持 @任务 / AI 协助）" rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}"></textarea>
@@ -955,7 +954,7 @@ function renderTeam(main) {
     if (listEl) {
       listEl.innerHTML = state.db.members.filter(m => matches(m, state.query)).map(m => {
         const dmId = "dm_" + [state.user, m.id].sort().join("_");
-        return `<div class="card" style="display:flex;gap:12px;align-items:center"><img src='baofu-mao.png' class='mascot-img'>
+        return `<div class="card" style="display:flex;gap:12px;align-items:center"><img src='mascot-head.png' class='mascot-img'>
         <div><b>${esc(m.name)}</b><div class="muted">${esc(m.role)}</div>
         <div class="row" style="margin-top:6px"><button class="btn btn-sm" onclick="openMemberForm('${m.id}')">编辑</button>
         <button class="btn btn-sm" onclick="switchChatRoom('${dmId}')">💬 私聊</button>
@@ -1063,7 +1062,7 @@ function renderResources(main) {
     <button class="btn" onclick="openToolForm()">＋ 工具</button></div></div>
     <h3 style="margin:6px 0">🧑‍⚕️ 专家（点击选择关联到工具）</h3>
     <div class="grid cols-3">${ex.map(e => `<div class="card" style="cursor:pointer" onclick="selectExpertForTool('${e.id}')">
-      <div class="row" style="gap:10px;align-items:center"><img src='baofu-mao.png' class='mascot-img' style="background:${e.color}20"><b>${esc(e.name)}</b></div>
+      <div class="row" style="gap:10px;align-items:center"><img src='mascot-head.png' class='mascot-img' style="background:${e.color}20"><b>${esc(e.name)}</b></div>
       <div class="chip brand" style="margin-top:8px">${esc(e.domain)}</div><div class="muted" style="margin-top:6px">${esc(e.desc)}</div>
       <div class="muted" style="margin-top:8px;font-size:11.5px">点击将此专家关联到工具 →</div>
       <button class="btn btn-sm btn-danger" style="margin-top:8px" onclick="event.stopPropagation();del('experts','${e.id}')">移除</button></div>`).join("") || "<div class='muted'>暂无专家，点击上方添加</div>"}</div>
@@ -1109,7 +1108,7 @@ window.openExpertPicker = (toolId) => {
   const exs = state.db.experts;
   openModal("🔗 选择专家连接器 · " + esc(t.name), `<div class="muted" style="margin-bottom:12px">选择一位专家关联到此工具，调用时将使用该专家的技能与领域知识。</div>
     <div class="grid cols-2">${exs.length ? exs.map(e => `<div class='card' style='cursor:pointer;border:2px solid ${t.expertId===e.id?"var(--brand)":"transparent"};transition:border-color .15s' onclick='pickExpert("${toolId}","${e.id}")'>
-      <div class='row' style='gap:10px;align-items:center'><img src='baofu-mao.png' class='mascot-img' style="background:${e.color}20"><div><b>${esc(e.name)}</b><div class='chip brand'>${esc(e.domain)}</div></div></div>
+      <div class='row' style='gap:10px;align-items:center'><img src='mascot-head.png' class='mascot-img' style="background:${e.color}20"><div><b>${esc(e.name)}</b><div class='chip brand'>${esc(e.domain)}</div></div></div>
       <div class='muted' style='margin-top:6px'>${esc(e.desc)}</div>
       ${t.expertId === e.id ? '<div class="chip green" style="margin-top:6px">✅ 当前已选</div>' : ''}
     </div>`).join("") : "<div class='muted'>暂无专家，请先添加专家</div>"}</div>
@@ -1138,12 +1137,12 @@ window.invokeTool = async (id) => {
   const t = state.db.tools.find(x => x.id === id);
   const a = await api("POST", "/aiTasks", { title: "调用工具：" + t.name, prompt: `请使用【${t.name}】（专家技能：${t.skill || "—"}）完成任务：\n${t.desc || ""}`, linkedType: "task", linkedId: "", status: "待处理" });
   await runAITask(a.id);
-  toast("已直通主对话，复制指令交给猪猪侠即可执行");
+  toast("已直通主对话，复制指令交给斜杠喵即可执行");
 };
 
 function renderAIDesk(main) {
   const list = state.db.aiTasks.filter(a => matches(a, state.query));
-  main.innerHTML = `<div class="page-head"><div><h2>AI 任务台</h2><div class="sub">发起任务 → 交给猪猪侠（WorkBuddy 内置能力）→ 结果归档，并生成方案/进度</div></div>
+  main.innerHTML = `<div class="page-head"><div><h2>AI 任务台</h2><div class="sub">发起任务 → 交给斜杠喵（WorkBuddy 内置能力）→ 结果归档，并生成方案/进度</div></div>
     <button class="btn btn-primary" onclick="openAITaskForm()">＋ 发起 AI 任务</button></div>
     ${list.map(a => `
       <div class="ai-task"><div class="row" style="justify-content:space-between"><b>${esc(a.title)}</b><span class="chip ${statusChip(a.status)}">${a.status}</span></div>
@@ -1151,7 +1150,7 @@ function renderAIDesk(main) {
       <div class="doc-body" style="background:#fafbff;border:1px solid var(--line);border-radius:8px;padding:10px">${esc(a.prompt)}</div>
       <div class="res">${a.result ? esc(a.result) : "（结果待回填）"}</div>
       <div class="row" style="margin-top:10px">
-        <button class="btn btn-sm btn-primary" onclick="runAITask('${a.id}')">🤖 交给猪猪侠（自动执行）</button>
+        <button class="btn btn-sm btn-primary" onclick="runAITask('${a.id}')">🤖 交给斜杠喵（自动执行）</button>
         <button class="btn btn-sm" onclick="editAIResult('${a.id}')">回填结果</button>
         <button class="btn btn-sm" onclick="aiResultToProposal('${a.id}')">转为方案</button>
         <button class="btn btn-sm btn-danger" onclick="del('aiTasks','${a.id}')">删除</button>
@@ -1160,7 +1159,7 @@ function renderAIDesk(main) {
 window.openAITaskForm = () => {
   openModal("发起 AI 任务", formHTML([
     { key: "title", label: "任务标题" },
-    { key: "prompt", label: "任务指令", type: "textarea", placeholder: "把要 AI 做的事写清楚，会作为交给猪猪侠的 prompt" },
+    { key: "prompt", label: "任务指令", type: "textarea", placeholder: "把要 AI 做的事写清楚，会作为交给斜杠喵的 prompt" },
     { key: "linkedType", label: "关联类型(可选)", type: "select", options: [{ v: "", l: "无" }, { v: "proposal", l: "方案" }, { v: "task", l: "任务" }, { v: "customer", l: "客户" }] },
     { key: "linkedId", label: "关联ID(可选)", placeholder: "对应条目的 id" },
   ], {}));
@@ -1236,7 +1235,7 @@ function renderBadgeWall(memberId) {
   const m = state.db.members.find(x => x.id === memberId);
   return `<div class="card" style="margin-bottom:16px;background:linear-gradient(135deg,#fafbff,#f5f0ff);border-color:${tier.color}40">
     <div class="row" style="align-items:center;gap:12px;margin-bottom:10px">
-      <img src='baofu-mao.png' class='mascot-img' style="width:48px;height:48px;border-width:3px;border-color:${tier.color}">
+      <img src='mascot-head.png' class='mascot-img' style="width:48px;height:48px;border-width:3px;border-color:${tier.color}">
       <div><b style="font-size:16px">${esc(m?.name || "我")}</b>
         <div class="muted">${tier.icon} ${tier.name}级 · 综合分 ${composite}</div></div>
       <div style="margin-left:auto;display:flex;gap:14px">
@@ -1437,49 +1436,149 @@ function renderPresence(members) {
   $("#presence").innerHTML = uniq.map(m => `<div class="av" title="${esc(m.name)} 在线" style="background:${mColor(m.id)}">${esc(m.name[0])}</div>`).join("") + `<span class="muted" style="font-size:12px;margin-left:6px">${uniq.length} 在线</span>`;
 }
 
-// ---------- 登录与权限 ----------
+// ---------- 登录与权限（注册 + 申请 → 审批） ----------
+let authMode = "login"; // "login" | "register"
+
 function showLogin(msg) {
   const box = $("#loginBox");
   if (!box) return;
   box.classList.remove("hidden");
   const tip = $("#loginTip");
-  if (tip) tip.textContent = msg || "请输入协作者账号登录后使用";
-  const u = $("#loginUser"), p = $("#loginPass");
-  if (u) u.focus();
+  if (tip) tip.textContent = msg || "登录后使用乔本·数果 AI 协作工作台";
+  switchAuthTab(authMode);
 }
+function switchAuthTab(mode) {
+  authMode = mode;
+  const loginPanel = $("#loginPanel"), regPanel = $("#regPanel"), loginTab = $("#tabLogin"), regTab = $("#tabRegister");
+  if (loginPanel && regPanel) {
+    loginPanel.classList.toggle("hidden", mode !== "login");
+    regPanel.classList.toggle("hidden", mode !== "register");
+  }
+  if (loginTab && regTab) {
+    loginTab.classList.toggle("active", mode === "login");
+    regTab.classList.toggle("active", mode === "register");
+  }
+  const focusId = mode === "login" ? "loginUser" : "regUser";
+  setTimeout(() => { const el = $(focusId); if (el) el.focus(); }, 50);
+}
+
 async function doLogin() {
   const u = ($("#loginUser").value || "").trim();
-  const p = ($("#loginPass").value || "");
-  if (!u || !p) return toast("请输入用户名和访问口令");
+  if (!u) return toast("请输入用户名");
   try {
-    const res = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user: u, pass: p }) });
-    if (!res.ok) { const e = await res.json().catch(() => ({})); return toast(e.error || "登录失败"); }
-    const d = await res.json();
-    localStorage.setItem("qb_token", d.token); localStorage.setItem("qb_user", d.user); localStorage.setItem("qb_role", d.role);
-    state.token = d.token; state.authUser = d.user; state.role = d.role; state.canEdit = d.role === "editor";
-    $("#loginBox").classList.add("hidden");
-    renderAuthBadge();
-    await loadAll();
-    connectWS();
-    toast("登录成功，欢迎 " + d.user + (d.role === "editor" ? "（编辑）" : "（只读）"));
+    const res = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: u }) });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (d.needRegister) { switchAuthTab("register"); return toast("用户不存在，请先注册"); }
+      return toast(d.error || "登录失败");
+    }
+    applyAuth(d);
   } catch (e) { toast("登录请求失败：" + e.message); }
 }
+
+async function doRegister() {
+  const u = ($("#regUser").value || "").trim();
+  const dn = ($("#regDisplay").value || "").trim();
+  if (!u || u.length < 2) return toast("用户名至少 2 个字符");
+  try {
+    const res = await fetch("/api/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: u, displayName: dn || u }) });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) return toast(d.error || "注册失败");
+    applyAuth(d);
+  } catch (e) { toast("注册请求失败：" + e.message); }
+}
+
+function applyAuth(d) {
+  localStorage.setItem("qb_token", d.token);
+  localStorage.setItem("qb_user", d.user);
+  localStorage.setItem("qb_role", d.role);
+  state.token = d.token; state.authUser = d.user; state.role = d.role;
+  state.canEdit = d.role === "editor" || d.role === "admin";
+  $("#loginBox").classList.add("hidden");
+  renderAuthBadge();
+  loadAll().then(() => { connectWS(); toast("欢迎回来，" + (d.displayName || d.user) + getRoleLabel(d.role)); })
+    .catch(() => showLogin("加载失败，请重新登录"));
+}
+
+function getRoleLabel(role) {
+  if (role === "admin") return "（管理员）";
+  if (role === "editor") return "（协作者）";
+  return "（只读）";
+}
+
 function doLogout() {
   localStorage.removeItem("qb_token"); localStorage.removeItem("qb_user"); localStorage.removeItem("qb_role");
   location.reload();
 }
+
+// 申请编辑权限
+async function applyForAccess() {
+  try {
+    const res = await api("POST", "/apply-access", { reason: "" });
+    const d = await res.json();
+    toast(d.message || "申请已提交");
+    renderAuthBadge(); // 刷新按钮状态
+  } catch (e) { /* api handles 401/403 */ }
+}
+
+// 管理员审批面板
+async function showApprovalPanel() {
+  try {
+    const res = await fetch("/api/access-requests", { headers: { "Authorization": "Bearer " + state.token } });
+    const d = await res.json().catch(() => ({ pending: [] }));
+    const list = d.pending || [];
+    if (!list.length) return toast("暂无待审批的申请 ✅");
+    let html = `<div class="approval-panel"><h4>📋 待审批申请 (${list.length})</h4>`;
+    for (const ar of list) {
+      html += `<div class="approval-item">
+        <div><b>${esc(ar.displayName || ar.username)}</b> <span class="muted">@${esc(ar.username)}</span></div>
+        <div class="muted" style="font-size:12px">${new Date(ar.requestedAt).toLocaleString()}</div>
+        <div class="row" style="gap:6px;margin-top:6px">
+          <button class="btn btn-sm btn-primary" onclick="approveRequest('${ar.id}')">✅ 通过</button>
+          <button class="btn btn-sm" onclick="rejectRequest('${ar.id}')">❌ 拒绝</button>
+        </div>
+      </div>`;
+    }
+    html += `</div>`;
+    // 用 modal 显示
+    openModal("访问审批", html, () => {});
+  } catch (e) { toast("获取审批列表失败"); }
+}
+
+async function approveRequest(id) {
+  try {
+    const res = await fetch(`/api/access-requests/${id}/approve`, { method: "POST", headers: { "Authorization": "Bearer " + state.token, "Content-Type": "application/json" } });
+    const d = await res.json();
+    toast(d.message || "已通过");
+    showApprovalPanel(); // 刷新
+  } catch (e) { toast("操作失败"); }
+}
+
+async function rejectRequest(id) {
+  try {
+    const res = await fetch(`/api/access-requests/${id}/reject`, { method: "POST", headers: { "Authorization": "Bearer " + state.token, "Content-Type": "application/json" } });
+    const d = await res.json();
+    toast(d.message || "已拒绝");
+    showApprovalPanel();
+  } catch (e) { toast("操作失败"); }
+}
+
 function renderAuthBadge() {
   const el = $("#authBadge");
   if (!el) return;
   if (!state.authUser) { el.innerHTML = ""; return; }
-  const roleTxt = state.canEdit ? "编辑" : "只读";
-  el.innerHTML = `<span class="auth-user">${esc(state.authUser)}</span><span class="auth-role ${state.canEdit ? "ed" : "ro"}">${roleTxt}</span><button class="auth-logout" onclick="doLogout()">退出</button>`;
+  const roleTxt = state.role === "admin" ? "管理员" : state.canEdit ? "协作者" : "只读";
+  let btns = "";
+  if (state.role === "admin") btns += `<button class="auth-btn" onclick="showApprovalPanel()">📋 审批</button>`;
+  if (!state.canEdit && state.authUser) btns += `<button class="auth-btn auth-warn" onclick="applyForAccess()">📝 申请编辑权限</button>`;
+  btns += `<button class="auth-logout" onclick="doLogout()">退出</button>`;
+  el.innerHTML = `<span class="auth-user">${esc(state.authUser)}</span><span class="auth-role ${state.canEdit ? 'ed' : 'ro'}">${roleTxt}</span>${btns}`;
   document.body.classList.toggle("readonly", !state.canEdit);
 }
 
 // ---------- 启动 ----------
 if (!state.token) {
-  showLogin("请输入协作者账号登录后使用");
+  showLogin("登录后使用乔本·数果 AI 协作工作台");
 } else {
   loadAll().then(() => {
     renderAuthBadge();
@@ -1487,6 +1586,14 @@ if (!state.token) {
     if (new URLSearchParams(location.search).get("join")) openJoin();
   }).catch(() => showLogin("登录状态无效，请重新登录"));
 }
+
+// ---------- 移动端侧边栏抽屉 ----------
+window.toggleSidebar = (force) => {
+  const open = typeof force === "boolean" ? force : !document.body.classList.contains("nav-open");
+  document.body.classList.toggle("nav-open", open);
+};
+const _navEl = document.getElementById("nav");
+if (_navEl) _navEl.addEventListener("click", (e) => { if (e.target.closest(".nav-item")) document.body.classList.remove("nav-open"); });
 
 // ---------- 助理Buddy 悬浮助手 ----------
 window.buddyQuick = (text) => { const el = $("#buddyInput"); if (el) { el.value = text; el.focus(); } };
@@ -1497,7 +1604,7 @@ window.buddyAssign = async () => {
   $("#buddyPanel").classList.add("hidden");
   if (el) el.value = "";
   await runAITask(a.id);
-  toast("已直通主对话，复制指令交给猪猪侠即可执行");
+  toast("已直通主对话，复制指令交给斜杠喵即可执行");
 };
 (function initBuddy() {
   const fab = $("#buddyFab"), panel = $("#buddyPanel"), close = $("#buddyClose");

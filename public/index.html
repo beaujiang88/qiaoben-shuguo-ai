@@ -7,23 +7,38 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <!-- 登录层（访问控制） -->
+  <!-- 登录层（注册 + 登录 + 申请审批） -->
   <div id="loginBox" class="login-box hidden">
     <div class="login-card">
-      <div class="login-logo" style="background:url('baofu-mao.png') center/cover"></div>
+      <div class="login-logo" style="background:url('mascot-head.png') center/cover"></div>
       <div class="login-title">乔本·数果 AI 工作台</div>
-      <div id="loginTip" class="login-tip">请输入协作者账号登录后使用</div>
-      <input id="loginUser" class="login-input" placeholder="用户名（如 beau / zhao）" autocomplete="username" />
-      <input id="loginPass" class="login-input" type="password" placeholder="访问口令" autocomplete="current-password"
-        onkeydown="if(event.key==='Enter')doLogin()" />
-      <button class="btn btn-primary login-btn" onclick="doLogin()">登 录</button>
-      <div class="login-note">协作者（编辑）名单内成员可修改数据；其他登录用户仅只读。</div>
+      <div id="loginTip" class="login-tip">登录后使用协作工作台</div>
+      <!-- Tab 切换 -->
+      <div class="auth-tabs">
+        <button id="tabLogin" class="auth-tab active" onclick="switchAuthTab('login')">登录</button>
+        <button id="tabRegister" class="auth-tab" onclick="switchAuthTab('register')">注册</button>
+      </div>
+      <!-- 登录面板 -->
+      <div id="loginPanel">
+        <input id="loginUser" class="login-input" placeholder="输入你的注册名（WorkBuddy 用户名）" autocomplete="username"
+          onkeydown="if(event.key==='Enter')doLogin()" />
+        <button class="btn btn-primary login-btn" onclick="doLogin()">登 录</button>
+      </div>
+      <!-- 注册面板 -->
+      <div id="regPanel" class="hidden">
+        <input id="regUser" class="login-input" placeholder="注册名（用于登录）" autocomplete="username" />
+        <input id="regDisplay" class="login-input" placeholder="显示名称（可选，如：林博士）" autocomplete="nickname"
+          onkeydown="if(event.key==='Enter')doRegister()" />
+        <button class="btn btn-primary login-btn" onclick="doRegister()">注 册</button>
+      </div>
+      <div class="login-note">注册后默认为只读身份，需申请并通过审批后才可编辑数据。</div>
     </div>
   </div>
 
   <header class="topbar">
+    <button id="navToggle" class="nav-toggle" onclick="toggleSidebar()" aria-label="菜单">☰</button>
     <div class="brand">
-      <span class="logo" style="background:url('baofu-mao.png') center/contain no-repeat;display:inline-block;width:32px;height:32px;border-radius:8px"></span>
+      <span class="logo" style="background:url('mascot-head.png') center/contain no-repeat;display:inline-block;width:32px;height:32px;border-radius:8px"></span>
       <div>
         <div class="brand-title">乔本·数果 <b>AI</b> 肠道健康管理</div>
         <div class="brand-sub">知识库式多人协作工作台</div>
@@ -39,6 +54,8 @@
       <button id="shareBtn" class="btn btn-primary">↗ 分享 / 转发</button>
     </div>
   </header>
+
+  <div id="navBackdrop" class="nav-backdrop"></div>
 
   <div class="layout">
     <aside class="sidebar">
@@ -69,11 +86,12 @@
   </div>
 
   <!-- 助理Buddy 悬浮助手 -->
-  <div id="buddyFab" class="buddy-fab" title="助理Buddy · 指派 AI 任务" style="background:url('baofu-mao.png') center/cover;border-radius:50%;box-shadow:0 10px 28px rgba(124,92,255,.45),0 0 0 3px rgba(124,92,255,.2)"></div>
+  <div id="buddyFab" class="buddy-fab" title="助理Buddy · 指派 AI 任务" style="background:url('mascot-head.png') center/cover;border-radius:50%;box-shadow:0 10px 28px rgba(124,92,255,.45),0 0 0 3px rgba(124,92,255,.2)"></div>
   <div id="buddyPanel" class="buddy-panel hidden">
-    <div class="buddy-head" style="background:linear-gradient(135deg,#7c5cff,#5b8def);display:flex;align-items:center;gap:10px"><div style="width:36px;height:36px;border-radius:50%;background:url('baofu-mao.png') center/cover;flex-shrink:0;border:2px solid rgba(255,255,255,.4)"></div><span>🐷 助理Buddy</span><button id="buddyClose" class="x">✕</button></div>
+    <div class="buddy-head" style="background:linear-gradient(135deg,#7c5cff,#5b8def);display:flex;align-items:center;gap:10px"><div style="width:36px;height:36px;border-radius:50%;background:url('mascot-head.png') center/cover;flex-shrink:0;border:2px solid rgba(255,255,255,.4)"></div><span>🐷 助理Buddy</span><button id="buddyClose" class="x">✕</button></div>
     <div class="buddy-body">
-      <div class="muted" style="font-size:12px;margin-bottom:8px">用一句话指派任务，AI 直通主对话（猪猪侠）直接执行。</div>
+      <div style="text-align:center;margin-bottom:8px"><img src='mascot-body.png' style="width:140px;height:auto;object-fit:contain"></div>
+      <div class="muted" style="font-size:12px;margin-bottom:8px">用一句话指派任务，AI 直通主对话（斜杠喵）直接执行。</div>
       <textarea id="buddyInput" placeholder="例如：帮我写一份门店肠道测评 SOP…"></textarea>
       <div class="row" style="gap:6px;flex-wrap:wrap;margin:8px 0">
         <button class="btn btn-sm" onclick="buddyQuick('帮我写一份肠道健康管理项目方案')">✍️ 写方案</button>
