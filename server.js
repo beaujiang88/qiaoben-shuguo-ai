@@ -153,7 +153,7 @@ function pickColor() { return MEMBER_COLORS[Math.floor(Math.random() * MEMBER_CO
 // ---------- 共享数据库（JSON 文件） ----------
 const COLLECTIONS = [
   "members", "plans", "tasks", "proposals", "feedback",
-  "customers", "experts", "tools", "aiTasks", "docs", "events",
+  "customers", "experts", "tools", "aiTasks", "docs", "kbDocs", "events",
   "followups", "reports", "media", "messages", "badges",
   "users", "accessRequests", "shares", "chatRooms", "drafts"
 ];
