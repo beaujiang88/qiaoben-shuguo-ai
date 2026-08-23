@@ -327,3 +327,15 @@ body.readonly a[download]{display:none!important}
 .kpi.card{cursor:pointer;transition:transform .12s,box-shadow .12s;position:relative;overflow:hidden}
 .kpi.card::after{content:"";position:absolute;top:0;right:0;width:60px;height:60px;background:radial-gradient(circle,rgba(124,92,255,.08),transparent 70%);pointer-events:none}
 .kpi.card:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(20,30,70,.12);border-color:rgba(124,92,255,.25)}
+
+/* ---------- 聊天：任务共享编辑引用 ---------- */
+.chat-task-ref{display:inline-flex;align-items:center;gap:4px;background:rgba(124,92,255,.12);border:1px solid rgba(124,92,255,.3);color:var(--brand);border-radius:8px;padding:2px 8px;font-size:12px;font-weight:600;cursor:pointer;transition:all .15s;margin:1px 0}
+.chat-task-ref:hover{background:rgba(124,92,255,.22);transform:translateY(-1px)}
+.chat-bubble.self .chat-task-ref{background:rgba(255,255,255,.2);border-color:rgba(255,255,255,.4);color:#fff}
+.mascot-xs{width:20px;height:20px;border-radius:50%;object-fit:cover;vertical-align:middle}
+.chk-row{display:flex;align-items:center;gap:8px;padding:7px 8px;border:1px solid var(--line);border-radius:8px;margin:5px 0;cursor:pointer;font-size:13px;transition:all .15s}
+.chk-row:hover{border-color:var(--brand);background:rgba(124,92,255,.04)}
+
+/* ---------- 公众号推送 ---------- */
+.wx-push .field{margin:8px 0}
+.wx-bind{border:1px solid #07c16033}

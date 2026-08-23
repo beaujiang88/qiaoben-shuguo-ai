@@ -27,7 +27,7 @@ const COLLECTIONS = [
   "members", "plans", "tasks", "proposals", "feedback",
   "customers", "experts", "tools", "aiTasks", "docs", "events",
   "followups", "reports", "media", "messages", "badges",
-  "users", "accessRequests", "shares"
+  "users", "accessRequests", "shares", "chatRooms"
 ];
 
 function seed() {
@@ -421,10 +421,20 @@ app.use("/api", (req, res, next) => {
   if (["POST", "PUT", "DELETE", "PATCH"].includes(req.method)) {
     // /apply-access（申请编辑权限）与 /access-requests/*（审批）放行，角色在路由层校验
     const openWrite = p === "/apply-access" || p.startsWith("/access-requests") || p === "/me/rename";
-    if (!openWrite && !["editor", "admin"].includes(latestRole)) {
+    // 聊天是基础协作能力：消息发送/建群对全体登录成员开放（群解散在 col 层由群主/管理员校验）
+    const chatWrite = p === "/messages" || p === "/chatRooms" || /^\/messages\/|^\/chatRooms\//.test(p);
+    if (!openWrite && !chatWrite && !["editor", "admin"].includes(latestRole)) {
       // 计划/任务：owner 或协助成员可在其参与范围内写入
       if (!planTaskWriteAllowed(p, req)) {
         return res.status(403).json({ error: "无修改权限：该计划/任务仅创建者或协助成员可编辑" });
+      }
+    }
+    // 群解散/删除：仅群主或管理员
+    const grp = p.match(/^\/chatRooms\/([\w-]+)$/);
+    if (req.method === "DELETE" && grp) {
+      const g = getCol("chatRooms").find(x => x.id === grp[1]);
+      if (g && g.createdBy !== req.auth.user && g.createdBy !== "m_" + req.auth.user && latestRole !== "admin") {
+        return res.status(403).json({ error: "仅群主或管理员可解散该群" });
       }
     }
   }
@@ -567,6 +577,26 @@ app.post("/api/me/rename", (req, res) => {
   }
   const token = makeToken(user.username, user.role);
   res.json({ token, user: user.username, role: user.role, displayName: user.displayName, changedName, requestStatus });
+});
+
+// 管理员提权/降权：把某个登录账号设为 admin（或降回 user）；账号不存在时自动建号（便于预授权）
+app.post("/api/admin/set-role", (req, res) => {
+  if (req.auth?.role !== "admin") return res.status(403).json({ error: "仅管理员可设置角色" });
+  const { username, role } = req.body || {};
+  if (!username || !["admin", "user", "editor"].includes(role)) return res.status(400).json({ error: "参数不合法" });
+  let user = getCol("users").find(u => u.username === username);
+  let created = false;
+  if (!user) {
+    const mem = getCol("members").find(m => m.id === "m_" + username);
+    user = { id: "u_" + Math.random().toString(36).slice(2, 8).toUpperCase(), username, displayName: (mem && mem.name) || username, role, createdAt: Date.now() };
+    getCol("users").push(user);
+    created = true;
+  } else {
+    user.role = role;
+  }
+  saveDB(DB);
+  console.log(`[ROLE] ${req.auth.user} 将 ${username} 设为 ${role}${created ? "（新建账号）" : ""}`);
+  res.json({ ok: true, username, role, created, displayName: user.displayName });
 });
 
 // 推送（编辑/管理员）：把某条目推送给指定成员，进入对方收件箱

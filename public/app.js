@@ -29,7 +29,7 @@ const state = {
   canEdit: ["editor", "admin"].includes((localStorage.getItem("qb_role") || "")),
   inbox: [], inboxUnread: 0,
 };
-const COLS = ["members", "plans", "tasks", "proposals", "feedback", "customers", "experts", "tools", "aiTasks", "docs", "events", "followups", "reports", "media", "messages", "badges"];
+const COLS = ["members", "plans", "tasks", "proposals", "feedback", "customers", "experts", "tools", "aiTasks", "docs", "events", "followups", "reports", "media", "messages", "badges", "chatRooms"];
 const TASK_CATS = ["产品规划", "技术开发", "市场招商", "门店运营", "内容生产", "培训考核", "合规风控", "客户服务"];
 let taskCatTab = "全部";
 window.setTaskCat = (c) => { taskCatTab = c; render(); };
@@ -40,17 +40,27 @@ let mediaRegionTab = "全部区域";
 window.setMediaRegion = (r) => { mediaRegionTab = r; render(); };
 
 // ---------- 聊天系统 ----------
-let chatRoom = "group"; // 'group' or 'dm_{id}_{id}'
+let chatRoom = "group"; // 'group' | 'dm_{id}_{id}' | 'grp_{ts}' 自定义群
 let chatRooms = [];
 function buildChatRooms() {
   const others = state.db.members.filter(m => m.id !== state.user);
+  const custom = (state.db.chatRooms || []).filter(g => (g.members || []).includes(state.user));
   chatRooms = [
     { id: "group", name: "📢 项目总群", icon: "👥" },
+    ...custom.map(g => ({ id: g.id, name: (g.emoji || "👥") + " " + g.name, icon: g.emoji || "👥", custom: true, ownerId: g.createdBy, members: g.members })),
     ...others.map(m => ({ id: "dm_" + [state.user, m.id].sort().join("_"), name: m.name, icon: "💬", targetId: m.id }))
   ];
 }
 function getChatMessages() {
-  return (state.db.messages || []).filter(msg => msg.roomId === chatRoom).sort((a, b) => a.ts - b.ts);
+  return (state.db.messages || []).filter(msg => (msg.roomId || "group") === chatRoom).sort((a, b) => a.ts - b.ts);
+}
+// 消息文本中的 @任务【标题】(id) 渲染成可点击卡片（点开即可编辑 → 任务分享协作）
+function renderChatText(text) {
+  return esc(text).replace(/@任务【([^】]*)】\(([\w-]+)\)/g, (full, title, tid) => {
+    const t = (state.db.tasks || []).find(x => x.id === tid);
+    const label = t ? t.title : title;
+    return `<span class="chat-task-ref" onclick="event.stopPropagation();openTaskForm('${tid}')" title="点击打开并编辑该任务">📌 ${label}</span>`;
+  });
 }
 window.sendChat = async () => {
   const el = $("#chatInput"); if (!el) return;
@@ -71,13 +81,52 @@ window.renderChatMessages = () => {
   box.innerHTML = msgs.map(m => {
     const isSelf = m.from === state.user;
     return `<div class="chat-bubble ${isSelf ? 'self' : 'other'}">
-      <div>${esc(m.text)}</div>
+      <div>${renderChatText(m.text)}</div>
       <div class="meta">${mName(m.from)} · ${timeAgo(m.ts)}</div>
     </div>`;
   }).join("");
   box.scrollTop = 999999;
 };
 window.switchChatRoom = (id) => { chatRoom = id; render(); };
+// ---------- 拉小组群 ----------
+window.openGroupForm = () => {
+  const others = state.db.members.filter(m => m.id !== state.user);
+  openModal("拉一个小组群", `
+    <div class="muted" style="margin-bottom:10px">选择成员组建小组，群内消息只对成员可见，实时同步；任务可通过 📌 引用共享编辑。</div>
+    <div class="field"><label>群名称</label><input id="grpName" class="ipt" placeholder="如：招商专项组" /></div>
+    <div class="field"><label>群成员（多选）</label>
+      ${others.map(m => `<label class="chk-row"><input type="checkbox" class="grp-chk" value="${m.id}"> <img src='mascot-head.png' class='mascot-xs'> ${esc(m.name)} <span class="muted" style="font-size:12px">${esc(m.role)}</span></label>`).join("")}
+    </div>
+    <div class="row" style="justify-content:flex-end;margin-top:10px"><button class="btn btn-primary" id="grpGo">👥 创建群聊</button></div>`);
+  $("#grpGo").onclick = async () => {
+    const name = ($("#grpName").value || "").trim();
+    if (!name) return toast("请填写群名称");
+    const members = [...$$(".grp-chk:checked")].map(x => x.value);
+    if (!members.length) return toast("请至少选择一名成员");
+    const g = { id: "grp_" + Date.now(), name, emoji: "👥", members: [...members, state.user], createdBy: state.user, createdAt: Date.now() };
+    try {
+      await api("POST", "/chatRooms", g);
+      state.db.chatRooms = state.db.chatRooms || [];
+      state.db.chatRooms.push(g);
+      chatRoom = g.id;
+      closeModal(); render();
+      toast("群「" + name + "」已创建，去聊天吧");
+    } catch (e) { toast("创建失败：" + e.message); }
+  };
+};
+window.dissolveGroup = async (gid) => {
+  const g = (state.db.chatRooms || []).find(x => x.id === gid);
+  if (!g) return;
+  if (g.createdBy !== state.user && state.role !== "admin") return toast("只有群主或管理员可解散群");
+  if (!confirm("确定解散群「" + g.name + "」？群消息将保留但入口消失。")) return;
+  try {
+    await api("DELETE", "/chatRooms/" + gid);
+    state.db.chatRooms = state.db.chatRooms.filter(x => x.id !== gid);
+    if (chatRoom === gid) chatRoom = "group";
+    render();
+    toast("群已解散");
+  } catch (e) { toast("解散失败：" + e.message); }
+};
 window.chatInsertTask = () => {
   const el = $("#chatInput"); if (!el) return;
   const tasks = state.db.tasks.filter(t => t.status !== "done").slice(0, 8);
@@ -201,6 +250,13 @@ function parseColId(path) {
 // 写操作放行：计划/任务允许 owner / collaborators 在其参与范围内写入（服务端对 plans/tasks 不按角色拦截）
 function itemLevelWriteAllowed(method, path, body) {
   const { col, id } = parseColId(path);
+  // 聊天是基础协作能力：发消息 / 建群对所有登录成员开放
+  if (col === "messages") return true;
+  if (col === "chatRooms") {
+    if (method === "POST") return true; // 拉群
+    const g = (state.db.chatRooms || []).find(x => x.id === id);
+    return !!(g && (g.createdBy === state.user || state.role === "admin")); // 解散：群主/管理员
+  }
   if (col === "plans") {
     if (method === "POST") return true; // 创建者自动成为 owner
     return canEditPlan((state.db.plans || []).find(x => x.id === id));
@@ -692,7 +748,7 @@ function mediaCard(m) {
       <button class='btn btn-sm' onclick='event.stopPropagation();openMediaForm("${m.id}")'>编辑</button>
       <button class='btn btn-sm btn-danger' onclick='event.stopPropagation();del("media","${m.id}")'>删</button>
     </div>
-    <div class='meta' style='margin-top:6px'>已推送 ${pushed.length} 个客户</div>
+    <div class='meta' style='margin-top:6px'>已推送 ${pushed.length} 个客户${m.pushedWechat ? ` · <span style="color:#07c160">✓ 公众号 ${esc(m.pushedWechat)}</span>` : ""}</div>
   </div>`;
 }
 function renderMedia(main) {
@@ -738,9 +794,10 @@ window.previewMedia = (id) => {
     <div class='lb-panel'>
       <div class='lb-head'><span>${esc(m.category || "")}</span><button class='x' onclick='closeLightbox()'>✕</button></div>
       <div class='lb-body'>${body}</div>
-      <div class='lb-meta'>${MEDIA_ICON[m.kind] || "📁"} <b>${esc(m.title)}</b> · ${esc(m.kind)} · ${esc(m.region || "通用")}${m.desc ? " · " + esc(m.desc) : ""}</div>
-      <div class='row' style='gap:6px;justify-content:flex-end;margin-top:8px'>
+      <div class='lb-meta'>${MEDIA_ICON[m.kind] || "📁"} <b>${esc(m.title)}</b> · ${esc(m.kind)} · ${esc(m.region || "通用")}${m.desc ? " · " + esc(m.desc) : ""}${m.pushedWechat ? " · <span class='chip' style='background:#07c160;color:#fff'>已推公众号 " + esc(m.pushedWechat) + "</span>" : ""}</div>
+      <div class='row' style='gap:6px;justify-content:flex-end;margin-top:8px;flex-wrap:wrap'>
         ${u ? `<a class='btn btn-sm' href='${esc(u)}' target='_blank' rel='noopener'>🔗 打开原链接</a>` : ""}
+        <button class='btn btn-sm' style='background:#07c160;color:#fff;border-color:#07c160' onclick='openWechatPush("${m.id}")'>📱 推送公众号</button>
         <button class='btn btn-sm' onclick='closeLightbox();openForwardModal("${m.id}")'>↗ 转发</button>
         <button class='btn btn-sm' onclick='closeLightbox();openMediaForm("${m.id}")'>编辑</button>
       </div>
@@ -748,6 +805,51 @@ window.previewMedia = (id) => {
   lb.classList.remove("hidden");
 };
 window.closeLightbox = () => { const lb = $("#lightbox"); if (lb) { lb.classList.add("hidden"); lb.innerHTML = ""; } };
+// ---------- 微信公众号推送（绑定账号 / 复制草稿 / 标记已推） ----------
+window.openWechatPush = (id) => {
+  const m = state.db.media.find(x => x.id === id); if (!m) return;
+  const bound = localStorage.getItem("qb_wechat_account") || "";
+  const digest = (m.content || m.desc || "").replace(/\s+/g, " ").trim().slice(0, 54);
+  const fullDraft = `【${m.title}】\n\n${digest}${(m.content || "").length > 54 ? "…" : ""}\n\n${m.content || m.desc || ""}\n\n${m.url ? "原文链接：" + m.url + "\n" : ""}—— 来自 乔本·数果 AI 工作台`;
+  openModal("📱 推送到微信公众号", `
+    <div class="wx-push">
+      <div class="wx-bind card" style="padding:10px;margin-bottom:12px">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <div><b>绑定公众号</b><div class="muted" style="font-size:12px">${bound ? "当前绑定：「" + esc(bound) + "」" : "尚未绑定，填入公众号名称便于团队识别"}</div></div>
+          <div class="row" style="gap:6px"><input id="wxAccount" class="ipt" style="width:160px" placeholder="公众号名称" value="${esc(bound)}"><button class="btn btn-sm" id="wxBin">绑定</button></div>
+        </div>
+      </div>
+      <h4 style="margin:6px 0">草稿预览（编辑后再复制）</h4>
+      <div class="field"><label>标题</label><input id="wxTitle" class="ipt" value="${esc(m.title)}" /></div>
+      <div class="field"><label>摘要（公众号列表显示，≤54字）</label><input id="wxDigest" class="ipt" value="${esc(digest)}" /></div>
+      <div class="field"><label>正文</label><textarea id="wxBody" class="ipt" style="min-height:180px">${esc(m.content || m.desc || "")}</textarea></div>
+      <div class="row" style="gap:8px;justify-content:flex-end;margin-top:10px;flex-wrap:wrap">
+        <button class="btn btn-sm" id="wxCopy">📋 复制草稿全文</button>
+        <a class="btn btn-sm" href="https://mp.weixin.qq.com" target="_blank" rel="noopener">🔗 打开公众号后台</a>
+        <button class="btn btn-primary btn-sm" id="wxMark" style="background:#07c160;border-color:#07c160">✅ 标记已推送</button>
+      </div>
+      <div class="muted" style="font-size:12px;margin-top:8px">流程：预览编辑草稿 → 复制全文 → 打开公众号后台新建图文 → 粘贴发布。绑定账号仅保存在本机。</div>
+    </div>`);
+  $("#wxBin").onclick = () => {
+    const v = ($("#wxAccount").value || "").trim();
+    if (!v) return toast("请输入公众号名称");
+    localStorage.setItem("qb_wechat_account", v);
+    toast("已绑定公众号「" + v + "」");
+  };
+  $("#wxCopy").onclick = () => {
+    const draft = `【${$("#wxTitle").value}】\n\n${$("#wxDigest").value}\n\n${$("#wxBody").value}\n\n${m.url ? "原文链接：" + m.url + "\n" : ""}—— 来自 乔本·数果 AI 工作台`;
+    navigator.clipboard.writeText(draft).then(() => toast("草稿已复制，去公众号后台粘贴发布"));
+  };
+  $("#wxMark").onclick = async () => {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      await api("PUT", "/media/" + m.id, { pushedWechat: today });
+      m.pushedWechat = today;
+      closeModal(); closeLightbox(); render();
+      toast("已标记推送公众号（" + today + "）");
+    } catch (e) { toast("标记失败：" + e.message); }
+  };
+};
 window.openTextMedia = (id) => {
   const m = state.db.media.find(x => x.id === id); if (!m) return;
   openModal("图文 · " + m.title, `<div class='muted' style='margin-bottom:8px'>${esc(m.desc || "")}</div><div class='doc-body' style='white-space:pre-wrap;max-height:60vh;overflow:auto'>${esc(m.content || "")}</div>
@@ -1288,21 +1390,22 @@ function renderTeam(main) {
     <button class="btn" onclick="openInvite()">🔗 邀请 WorkBuddy 用户</button></div></div>
 
     <!-- 聊天面板 -->
-    <div class="card" style="margin-bottom:16px"><h3>💬 团队聊天（实时同步）</h3>
+    <div class="card" style="margin-bottom:16px"><h3>💬 团队聊天（实时同步 · 支持私聊 / 拉群 / 任务共享编辑）</h3>
       <div class="chat-layout">
         <div class="chat-sidebar">
-          <div class="chat-sidebar-head">会话</div>
+          <div class="chat-sidebar-head row" style="justify-content:space-between">会话 <button class="btn btn-sm" style="padding:2px 8px" onclick="openGroupForm()" title="拉一个小组群">＋ 拉群</button></div>
           ${chatRooms.map(r => `<div class="chat-session ${r.id === chatRoom ? 'active' : ''}" onclick="switchChatRoom('${r.id}')">
-            <span>${r.icon}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.name)}</span>
+            <span>${r.icon}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${esc(r.name)}</span>
+            ${r.custom ? `<button class="btn btn-sm btn-danger" style="padding:0 6px;font-size:11px" title="${r.ownerId === state.user ? '解散群' : '退出(群主才可解散)'}" onclick="event.stopPropagation();dissolveGroup('${r.id}')">✕</button>` : ""}
           </div>`).join("")}
         </div>
         <div class="chat-main">
-          <div class="chat-header"><img src='mascot-head.png' class='mascot-sm'> ${esc(activeRoom?.name || "聊天")}</div>
+          <div class="chat-header"><img src='mascot-head.png' class='mascot-sm'> ${esc(activeRoom?.name || "聊天")}${activeRoom?.members ? `<span class="muted" style="font-size:12px">（${activeRoom.members.length} 人 · ${activeRoom.members.map(id => mName(id)).join("、")}）</span>` : ""}</div>
           <div class="chat-messages" id="chatMsgBox"></div>
           <div class="chat-input-row">
-            <textarea id="chatInput" placeholder="输入消息…（支持 @任务 / AI 协助）" rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}"></textarea>
+            <textarea id="chatInput" placeholder="输入消息…（支持 @任务 共享编辑 / AI 协助）" rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}"></textarea>
             <div class="chat-actions">
-              <button class="btn btn-sm" title="引用任务" onclick="chatInsertTask()">📌 任务</button>
+              <button class="btn btn-sm" title="引用任务（对方点开即可编辑）" onclick="chatInsertTask()">📌 任务</button>
               <button class="btn btn-sm" title="AI 协助写消息" onclick="chatAIAssist()">🤖 AI</button>
               <button class="btn btn-primary btn-sm" onclick="sendChat()">发送</button>
             </div>
@@ -1323,10 +1426,12 @@ function renderTeam(main) {
     if (listEl) {
       listEl.innerHTML = state.db.members.filter(m => matches(m, state.query)).map(m => {
         const dmId = "dm_" + [state.user, m.id].sort().join("_");
+        const username = m.id.replace(/^m_/, "");
         return `<div class="card" style="display:flex;gap:12px;align-items:center"><img src='mascot-head.png' class='mascot-img'>
         <div><b>${esc(m.name)}</b><div class="muted">${esc(m.role)}</div>
-        <div class="row" style="margin-top:6px"><button class="btn btn-sm" onclick="openMemberForm('${m.id}')">编辑</button>
+        <div class="row" style="margin-top:6px;flex-wrap:wrap"><button class="btn btn-sm" onclick="openMemberForm('${m.id}')">编辑</button>
         <button class="btn btn-sm" onclick="switchChatRoom('${dmId}')">💬 私聊</button>
+        ${state.role === "admin" && m.id !== state.user ? `<button class="btn btn-sm" style="background:#b8860b;color:#fff;border-color:#b8860b" title="把 ${esc(username)} 的登录账号提升为管理员" onclick="setMemberAdmin('${m.id}')">👑 设为管理员</button>` : ""}
         <button class="btn btn-sm btn-danger" onclick="del('members','${m.id}')">移除</button></div></div></div>`;
       }).join("");
     }
@@ -1369,6 +1474,18 @@ window.openInvite = () => {
     <div class="share-box"><code>${link}</code></div>
     <div class="row" style="margin-top:12px"><button class="btn btn-primary" id="copyInv">📋 复制邀请链接</button></div>`);
   $("#copyInv").onclick = () => { navigator.clipboard.writeText(link); toast("邀请链接已复制，去 WorkBuddy 发给队友"); };
+};
+// ---------- 成员提权为管理员 ----------
+window.setMemberAdmin = async (mid) => {
+  const m = state.db.members.find(x => x.id === mid); if (!m) return;
+  const username = mid.replace(/^m_/, "");
+  if (!confirm(`确定把「${m.name}」设为管理员？\n对方用账号名「${username}」登录后将拥有全部操作权限（删除成员、审批、全库编辑）。`)) return;
+  try {
+    const r = await api("POST", "/admin/set-role", { username, role: "admin" });
+    toast(`✅ ${m.name}（账号 ${username}）已设为管理员${r.created ? "（已自动建号）" : ""}，对方重新登录后生效`);
+  } catch (e) {
+    toast(e.message === "read-only" ? "无权限：仅管理员可设置" : "提权失败：" + (e.message || ""));
+  }
 };
 // ---------- 收件箱 / 推送 / 改名 / 导出专项任务 ----------
 async function refreshInbox() {
@@ -2094,7 +2211,8 @@ function applyReadonly() {
     banner.classList.toggle("hidden", state.canEdit || dismissed);
   }
   if (state.canEdit) return;
-  const RE = /(openPropForm|openMediaForm|openFeedbackForm|openCustomerForm|openFollowForm|openReportForm|openMemberForm|openExpertForm|openToolForm|openAITaskForm|openDocForm|openTransferModal|claimTask|del\(|openForwardModal|openPushModal|saveAsTask|openPushCenter|openInvite|sendChat)/;
+  const RE = /(openPropForm|openMediaForm|openFeedbackForm|openCustomerForm|openFollowForm|openReportForm|openMemberForm|openExpertForm|openToolForm|openAITaskForm|openDocForm|openTransferModal|claimTask|del\(|openForwardModal|openPushModal|saveAsTask|openPushCenter|openInvite)/;
+  // 注意：聊天(sendChat/switchChatRoom/openGroupForm/chatInsertTask/chatAIAssist)与 openWechatPush 对所有成员开放，不隐藏
   document.querySelectorAll("button[onclick],a[onclick]").forEach(el => {
     if (RE.test(el.getAttribute("onclick") || "")) el.style.display = "none";
   });
