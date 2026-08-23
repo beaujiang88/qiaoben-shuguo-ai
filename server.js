@@ -369,11 +369,14 @@ function planTaskWriteAllowed(p, req) {
 //  - 管理员账号（ADMIN_USERS）+ 管理员密码 → admin，直接获得全部权限（免审批）
 //  - 成员：任意名字 + 成员密码 → role=user（只读，自动建号并提交待审批申请）
 //  - 已认证成员（editor/admin）用成员密码登录 → 维持其已有权限
+// 移除黑名单：被管理员删除的成员名字禁止再登录建号
+const DENIED_USERS = new Set(["lin", "zhao", "qian", "林博士", "赵运营", "钱产品"]);
 //  - 其余 → 401
 function tryLogin(username, password, displayName) {
   const name = String(username || "").trim();
   if (!name || name.length < 2) { const e = new Error("名字至少 2 个字符"); e.status = 400; throw e; }
   if (!password) { const e = new Error("请输入密码"); e.status = 400; throw e; }
+  if (DENIED_USERS.has(name)) { const e = new Error("该成员已被移出团队，如需重新加入请联系管理员"); e.status = 403; throw e; }
   const isAdminName = ADMIN_USERS.includes(name);
   let role;
   if (isAdminName) {
