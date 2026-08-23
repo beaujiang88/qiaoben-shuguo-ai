@@ -4,19 +4,18 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 const MODULES = [
-  { id: "overview", ic: "🏠", label: "概览" },
-  { id: "plans", ic: "🗺️", label: "计划" },
-  { id: "proposals", ic: "📄", label: "方案（AI写/改）" },
-  { id: "progress", ic: "📊", label: "执行进度" },
-  { id: "feedback", ic: "📈", label: "数据反馈" },
-  { id: "customers", ic: "👥", label: "客户管理" },
-  { id: "media", ic: "🎬", label: "媒体库" },
-  { id: "team", ic: "🤝", label: "团队" },
-  { id: "collab", ic: "🧩", label: "协作与分工" },
-  { id: "resources", ic: "🧰", label: "专家与工具" },
-  { id: "aidesk", ic: "🤖", label: "AI 任务台" },
-  { id: "docs", ic: "📚", label: "学习库" },
-  { id: "activity", ic: "🕘", label: "动态" },
+  { id: "overview", ic: "🏠", label: "概览", group: "核心" },
+  { id: "planexec", ic: "🛰️", label: "计划与执行进度", group: "核心" },
+  { id: "proposals", ic: "📄", label: "方案（AI写/改）", group: "核心" },
+  { id: "feedback", ic: "📈", label: "数据反馈", group: "业务" },
+  { id: "customers", ic: "👥", label: "客户管理", group: "业务" },
+  { id: "media", ic: "🎬", label: "媒体库", group: "业务" },
+  { id: "team", ic: "🤝", label: "团队", group: "协作" },
+  { id: "collab", ic: "🧩", label: "协作与分工", group: "协作" },
+  { id: "resources", ic: "🧰", label: "专家与工具", group: "协作" },
+  { id: "aidesk", ic: "🤖", label: "AI 任务台", group: "智能" },
+  { id: "docs", ic: "📚", label: "学习库", group: "智能" },
+  { id: "activity", ic: "🕘", label: "动态", group: "智能" },
 ];
 
 const state = {
@@ -123,9 +122,10 @@ window.chatAIAssist = () => {
 
 // ---------- API ----------
 async function api(method, path, body) {
-  // 写操作：非编辑角色在客户端先拦截（服务端也会硬拦截）
-  if (["POST", "PUT", "DELETE", "PATCH"].includes(method) && !state.canEdit) {
-    toast("无修改权限：请先申请并获得编辑权限");
+  // 写操作：非编辑角色在客户端先拦截；但计划/任务的 owner 与协助成员可在其参与范围内写入（服务端也会校验）
+  const isWrite = ["POST", "PUT", "DELETE", "PATCH"].includes(method);
+  if (isWrite && !state.canEdit && !itemLevelWriteAllowed(method, path, body)) {
+    toast("无修改权限：该计划/任务仅创建者或协助成员可编辑，其他数据需编辑权限");
     throw new Error("read-only");
   }
   const headers = { "Content-Type": "application/json" };
@@ -183,10 +183,79 @@ const matches = (item, q) => {
   return hay.includes(q.toLowerCase());
 };
 
+// 计划级权限：计划创建者 / 被邀请协助的成员，可编辑该计划及其下任务（即使全局只读）
+function canEditPlan(p) {
+  if (!p) return false;
+  return p.ownerId === state.user || (p.collaborators || []).includes(state.user);
+}
+function canEditTask(t) {
+  if (!t) return false;
+  if (t.ownerId === state.user) return true;
+  const p = (state.db.plans || []).find(x => x.id === t.planId);
+  return canEditPlan(p);
+}
+function parseColId(path) {
+  const m = String(path || "").match(/^\/?([\w-]+)\/?([^/]+)?/);
+  return m ? { col: m[1], id: m[2] } : { col: "", id: "" };
+}
+// 写操作放行：计划/任务允许 owner / collaborators 在其参与范围内写入（服务端对 plans/tasks 不按角色拦截）
+function itemLevelWriteAllowed(method, path, body) {
+  const { col, id } = parseColId(path);
+  if (col === "plans") {
+    if (method === "POST") return true; // 创建者自动成为 owner
+    return canEditPlan((state.db.plans || []).find(x => x.id === id));
+  }
+  if (col === "tasks") {
+    if (method === "POST") return canEditPlan((state.db.plans || []).find(x => x.id === (body && body.planId)));
+    return canEditTask((state.db.tasks || []).find(x => x.id === id));
+  }
+  return false;
+}
+
 function toast(msg) {
   const t = $("#toast"); t.textContent = msg; t.classList.remove("hidden");
   clearTimeout(t._t); t._t = setTimeout(() => t.classList.add("hidden"), 2200);
 }
+
+// ---------- 模块跳转（修复 goto 死链） ----------
+window.goto = function(mod) {
+  if (!mod) return;
+  state.route = mod;
+  location.hash = mod;
+  renderNav();
+  render();
+};
+window.togglePw = function(inputId, btn) {
+  const el = document.getElementById(inputId);
+  if (!el) return;
+  el.type = el.type === "password" ? "text" : "password";
+  if (btn) btn.textContent = el.type === "password" ? "👁" : "🙈";
+};
+
+// ---------- Chart.js 图表注册表 ----------
+const _charts = {};
+function destroyCharts() {
+  Object.values(_charts).forEach(c => { try { c.destroy(); } catch(e) {} });
+  for (const k in _charts) delete _charts[k];
+}
+function makeChart(canvasId, type, data, options) {
+  if (typeof Chart === "undefined") return null;
+  const el = document.getElementById(canvasId);
+  if (!el) return null;
+  const ctx = el.getContext("2d");
+  const c = new Chart(ctx, { type, data, options: { responsive: true, maintainAspectRatio: false, ...options } });
+  _charts[canvasId] = c;
+  return c;
+}
+// 科技感配色
+const CHART_COLORS = {
+  brand: "#7c5cff", brand2: "#5b8def", green: "#1e9e6a", orange: "#e8833a", red: "#e0533d",
+  palette: ["#7c5cff", "#5b8def", "#1e9e6a", "#e8833a", "#e0533d", "#9aa0b0", "#6c5ce7", "#0984e3"],
+  grid: "rgba(124,92,255,.08)",
+};
+// 在 render() 前销毁旧图，避免 canvas 复用报错
+const _origRender = render;
+render = function() { destroyCharts(); _origRender(); };
 
 // ---------- 弹窗表单 ----------
 function openModal(title, bodyHTML) {
@@ -280,7 +349,15 @@ window.openAIPrompt = async (id) => {
 
 // ---------- 导航 ----------
 function renderNav() {
-  $("#nav").innerHTML = MODULES.map(m => `<div class="nav-item ${state.route === m.id ? "active" : ""}" data-mod="${m.id}"><span class="ic">${m.ic}</span>${m.label}</div>`).join("");
+  const groups = [...new Set(MODULES.map(m => m.group))];
+  let html = "";
+  for (const g of groups) {
+    html += `<div class="nav-group-head">${g}</div>`;
+    for (const m of MODULES.filter(m => m.group === g)) {
+      html += `<div class="nav-item ${state.route === m.id ? "active" : ""}" data-mod="${m.id}"><span class="ic">${m.ic}</span>${m.label}</div>`;
+    }
+  }
+  $("#nav").innerHTML = html;
   $$("#nav .nav-item").forEach(n => n.onclick = () => { state.route = n.dataset.mod; location.hash = n.dataset.mod; renderNav(); render(); });
 }
 function renderUserSwitch() {
@@ -296,7 +373,7 @@ if (location.hash) state.route = location.hash.slice(1);
 function render() {
   const r = state.route;
   const main = $("#main");
-  const fns = { overview: renderOverview, plans: renderPlans, proposals: renderProposals, progress: renderProgress, feedback: renderFeedback, customers: renderCustomers, media: renderMedia, team: renderTeam, collab: renderCollab, resources: renderResources, aidesk: renderAIDesk, docs: renderDocs, activity: renderActivity };
+  const fns = { overview: renderOverview, planexec: renderPlanExec, proposals: renderProposals, feedback: renderFeedback, customers: renderCustomers, media: renderMedia, team: renderTeam, collab: renderCollab, resources: renderResources, aidesk: renderAIDesk, docs: renderDocs, activity: renderActivity };
   (fns[r] || renderOverview)(main);
   applyReadonly();
 }
@@ -323,23 +400,29 @@ function renderOverview(main) {
   const legend = (color, label, n) => `<div class='row' style='gap:6px;font-size:13px;margin:3px 0'><i style='width:11px;height:11px;border-radius:3px;background:${color};display:inline-block'></i>${label} <b>${n}</b></div>`;
 
   main.innerHTML = `
-  <div class='page-head'><div><h2>全盘数据大盘</h2><div class='sub'>乔本·数果 AI 肠道健康管理 · 实时同步 · 多端数据互通</div></div>
+  <div class='page-head pex-head'><div><h2>🛰️ 全盘数据大盘</h2><div class='sub'>乔本·数果 AI 肠道健康管理 · 实时同步 · 多端数据互通</div></div>
     <button class='btn btn-primary' onclick="goto('aidesk')">🤖 发起 AI 任务</button></div>
 
   <div class='grid cols-6'>
-    ${kpi('计划', db.plans.length, '🗺️')}
-    ${kpi('进行中任务', doing, '⚙️')}
-    ${kpi('已完成任务', done, '✅')}
-    ${kpi('方案', db.proposals.length, '📄')}
-    ${kpi('客户总数', customers.length, '👥')}
-    ${kpi('B端渠道', B.length, '🏢')}
-    ${kpi('C端用户', C.length, '🧍')}
-    ${kpi('随访记录', db.followups.length, '📞')}
-    ${kpi('检测报告', db.reports.length, '🧪')}
-    ${kpi('待处理AI', db.aiTasks.filter(a => a.status !== '已完成').length, '🤖')}
-    ${kpi('专家', db.experts.length, '🎓')}
-    ${kpi('知识库', db.docs.length, '📚')}
-    ${kpi('媒体库', db.media.length, '🎬')}
+    ${kpi('计划', db.plans.length, '🗺️', 'planexec')}
+    ${kpi('进行中任务', doing, '⚙️', 'planexec')}
+    ${kpi('已完成任务', done, '✅', 'planexec')}
+    ${kpi('方案', db.proposals.length, '📄', 'proposals')}
+    ${kpi('客户总数', customers.length, '👥', 'customers')}
+    ${kpi('B端渠道', B.length, '🏢', 'customers')}
+    ${kpi('C端用户', C.length, '🧍', 'customers')}
+    ${kpi('随访记录', db.followups.length, '📞', 'customers')}
+    ${kpi('检测报告', db.reports.length, '🧪', 'feedback')}
+    ${kpi('待处理AI', db.aiTasks.filter(a => a.status !== '已完成').length, '🤖', 'aidesk')}
+    ${kpi('专家', db.experts.length, '🎓', 'resources')}
+    ${kpi('知识库', db.docs.length, '📚', 'docs')}
+    ${kpi('媒体库', db.media.length, '🎬', 'media')}
+  </div>
+
+  <div class='grid cols-3' style='margin-top:16px'>
+    <div class='card chart-card'><h3>📊 任务状态分布</h3><div class='chart-box'><canvas id='ovPieTasks'></canvas></div></div>
+    <div class='card chart-card'><h3>📈 计划进度走势</h3><div class='chart-box'><canvas id='ovTrendPlans'></canvas></div></div>
+    <div class='card chart-card'><h3>🔗 业务链路漏斗</h3><div class='chart-box'><canvas id='ovFunnel'></canvas></div></div>
   </div>
 
   <div class='grid cols-2' style='margin-top:16px'>
@@ -348,13 +431,7 @@ function renderOverview(main) {
       ${tiers.map(t => `<div class='row' style='margin:9px 0;align-items:center'><div style='width:56px;font-size:13px;flex:0 0 auto'>${t}</div><div class='bar' style='flex:1'><i style='width:${total ? Math.round(tierCount(t) / total * 100) : 0}%'></i></div><div style='width:34px;text-align:right;font-weight:700;flex:0 0 auto'>${tierCount(t)}</div></div>`).join('')}
       <div class='row' style='margin:9px 0;align-items:center'><div style='width:56px;font-size:13px;flex:0 0 auto'>C端</div><div class='bar' style='flex:1'><i style='width:100%;background:var(--brand)'></i></div><div style='width:34px;text-align:right;font-weight:700;flex:0 0 auto'>${C.length}</div></div>
     </div>
-    <div class='card'><h3>📊 任务 / 客户分布</h3>
-      <div class='row' style='gap:20px;align-items:center'>
-        ${ring(Math.round(done / total * 100), 'var(--green)', '完成')}
-        <div>${legend('var(--green)', '已完成', done)}${legend('var(--brand)', '进行中', doing)}${legend('var(--line)', '待启动', todo)}
-          <div style='height:8px'></div>${legend('#7c5cff', 'A 级', lv('A'))}${legend('#e8833a', 'B 级', lv('B'))}${legend('#9aa0b0', 'C 级', lv('C'))}</div>
-      </div>
-    </div>
+    <div class='card'><h3>📊 客户价值分布</h3><div class='chart-box' style='margin-top:8px'><canvas id='ovPieCustomers'></canvas></div></div>
   </div>
 
   <div class='grid cols-2' style='margin-top:16px'>
@@ -394,7 +471,7 @@ function renderOverview(main) {
           <div style='text-align:center'><div style='font-size:18px;font-weight:700;color:var(--orange)'>${doing}</div><div class='muted' style='font-size:11px'>进行中</div></div>
           <div style='text-align:center'><div style='font-size:18px;font-weight:700;color:var(--ink2)'>${linkedFeedback.length}</div><div class='muted' style='font-size:11px'>关联反馈</div></div>
         </div>
-        <div class='meta' style='margin-top:6px'>${mName(p.ownerId)} · ${p.start} → ${p.end} · <span class='linked' onclick="goto('plans')">查看甘特图 →</span></div>
+        <div class='meta' style='margin-top:6px'>${mName(p.ownerId)} · ${p.start} → ${p.end} · <span class='linked' onclick="goto('planexec')">查看甘特图 →</span></div>
       </div>`;
     }).join('')}
   </div>
@@ -408,6 +485,44 @@ function renderOverview(main) {
     <div class='card'><h3>📞 近期随访</h3>${db.followups.slice(0, 6).map(f => `<div style='margin:8px 0;font-size:13px'><span class='chip brand'>${esc(f.type)}</span> ${esc(cName(f.customerId))} · ${mName(f.byMember)}<div class='muted'>${f.date} · ${esc(f.content)}</div></div>`).join('') || "<div class='muted'>暂无随访</div>"}</div>
     <div class='card'><h3>🕘 最近动态</h3>${db.events.slice(0, 8).map(e => `<div style='margin:7px 0;font-size:13px'><span class='chip brand'>${mName(e.actor)}</span> ${esc(e.text)} <span class='muted'>· ${timeAgo(e.ts)}</span></div>`).join('')}</div>
   </div>`;
+
+  // 渲染 Chart.js 图表
+  setTimeout(() => {
+    // 1) 任务状态饼图
+    makeChart("ovPieTasks", "doughnut", {
+      labels: ["已完成", "进行中", "待启动"],
+      datasets: [{ data: [done, doing, todo], backgroundColor: [CHART_COLORS.green, CHART_COLORS.brand, "#e7e9f0"], borderWidth: 0 }]
+    }, { plugins: { legend: { position: "bottom" } }, cutout: "60%" });
+
+    // 2) 计划进度走势线图
+    const planLabels = db.plans.map(p => p.title.slice(0, 8));
+    const planProgress = db.plans.map(p => p.progress || 0);
+    const planTaskDone = db.plans.map(p => {
+      const ts = db.tasks.filter(t => t.planId === p.id);
+      return ts.length ? Math.round(ts.filter(t => t.status === "done").length / ts.length * 100) : 0;
+    });
+    makeChart("ovTrendPlans", "line", {
+      labels: planLabels,
+      datasets: [
+        { label: "计划进度%", data: planProgress, borderColor: CHART_COLORS.brand, backgroundColor: "rgba(124,92,255,.1)", tension: .3, fill: true },
+        { label: "任务完成%", data: planTaskDone, borderColor: CHART_COLORS.green, backgroundColor: "rgba(30,158,106,.08)", tension: .3, fill: true },
+      ]
+    }, { plugins: { legend: { position: "bottom" } }, scales: { y: { beginAtZero: true, max: 100, grid: { color: CHART_COLORS.grid } } } });
+
+    // 3) 业务链路漏斗
+    const funnelStages = ["B端渠道", "门店", "C端用户", "检测报告", "复购/干预"];
+    const funnelData = [B.length, B.filter(c => c.tier === "门店").length, C.length, db.reports.length, C.filter(c => c.stage === "复购" || c.stage === "干预中").length];
+    makeChart("ovFunnel", "bar", {
+      labels: funnelStages,
+      datasets: [{ label: "数量", data: funnelData, backgroundColor: [CHART_COLORS.brand, CHART_COLORS.brand2, CHART_COLORS.green, CHART_COLORS.orange, CHART_COLORS.red], borderRadius: 6 }]
+    }, { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, grid: { color: CHART_COLORS.grid } } } });
+
+    // 4) 客户价值分布饼图
+    makeChart("ovPieCustomers", "pie", {
+      labels: ["A 级", "B 级", "C 级"],
+      datasets: [{ data: [lv("A"), lv("B"), lv("C")], backgroundColor: [CHART_COLORS.brand, CHART_COLORS.orange, "#9aa0b0"], borderWidth: 0 }]
+    }, { plugins: { legend: { position: "bottom" } } });
+  }, 30);
 }
 function renderActivity(main) {
   const list = state.db.events || [];
@@ -425,7 +540,7 @@ function ownerBadge(oid) {
   if (!m) return esc(oid);
   return `<span style="display:inline-flex;align-items:center;gap:5px"><span style="width:20px;height:20px;border-radius:50%;background:${m.color};color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">${esc(m.name[0])}</span>${esc(m.name)}</span>`;
 }
-function kpi(l, n, ic) { return `<div class="card kpi"><div class="l">${ic} ${l}</div><div class="n">${n}</div></div>`; }
+function kpi(l, n, ic, link) { return `<div class="card kpi" ${link ? `onclick="goto('${link}')" style="cursor:pointer"` : ""}><div class="l">${ic} ${l}</div><div class="n">${n}</div></div>`; }
 function timeAgo(ts) { const d = Math.floor((Date.now() - ts) / 1000); if (d < 60) return "刚刚"; if (d < 3600) return Math.floor(d / 60) + "分钟前"; if (d < 86400) return Math.floor(d / 3600) + "小时前"; return Math.floor(d / 86400) + "天前"; }
 
 function renderPlans(main) {
@@ -474,12 +589,12 @@ function renderPlans(main) {
       <div class="bar"><i style="width:${p.progress}%"></i></div>
       <div class="meta">负责人 ${mName(p.ownerId)} · ${p.start}→${p.end} · 任务 ${done}/${ts.length} · 进度 ${p.progress}%</div>
       <div class="row" style="margin-top:10px"><button class="btn btn-sm" onclick="openPlanForm('${p.id}')">编辑</button>
-      <button class="btn btn-sm" onclick="goto('progress')">看任务</button>
+      <button class="btn btn-sm" onclick="goto('planexec')">看任务</button>
       <button class="btn btn-sm btn-danger" onclick="del('plans','${p.id}')">删除</button></div></div>`;
     }).join("") || "<div class='empty'>无匹配计划</div>"}</div>`;
 }
 window.openPlanForm = (id) => {
-  const p = id ? state.db.plans.find(x => x.id === id) : {};
+  const p = id ? state.db.plans.find(x => x.id === id) : { ownerId: state.user, collaborators: [], status: "进行中", progress: 0 };
   openModal(id ? "编辑计划" : "新建计划", formHTML([
     { key: "title", label: "计划标题" }, { key: "desc", label: "描述", type: "textarea" },
     { key: "status", label: "状态", type: "select", options: [{ v: "进行中", l: "进行中" }, { v: "已完成", l: "已完成" }, { v: "暂停", l: "暂停" }] },
@@ -487,9 +602,15 @@ window.openPlanForm = (id) => {
     { key: "start", label: "开始日期", type: "date" }, { key: "end", label: "结束日期", type: "date" },
     { key: "progress", label: "进度(%)", type: "number" },
   ], p));
+  const collab = (p.collaborators || []);
+  const sel = (state.db.members || []).map(m => `<label class="chk"><input type="checkbox" class="collab-chk" value="${m.id}" ${collab.includes(m.id) ? "checked" : ""}> ${esc(m.name)}</label>`).join("");
   $("#modalBody").insertAdjacentHTML("afterbegin", aiBtn("plan", "desc", { hint: "让 AI 帮你起草计划说明（背景、目标、执行节奏）。" }));
+  $("#modalBody").insertAdjacentHTML("beforeend", `<div class="field" style="margin-top:10px"><label>邀请协助成员（选中后，对方在「我的工作计划」中可见此计划，并可编辑）</label><div class="chk-list">${sel}</div></div>`);
   $("#formSubmit").onclick = async () => {
     const fd = readForm(); if (!fd.title) return toast("请填标题");
+    fd.collaborators = [...document.querySelectorAll(".collab-chk:checked")].map(x => x.value);
+    if (!fd.ownerId) fd.ownerId = state.user;
+    fd.progress = Number(fd.progress) || 0;
     id ? await api("PUT", `/plans/${id}`, fd) : await api("POST", "/plans", fd);
     closeModal(); toast("已保存");
   };
@@ -505,7 +626,7 @@ function renderProposals(main) {
       <div class="doc-body" style="max-height:160px;overflow:auto">${esc(p.content)}</div>
       <div class="meta">v${p.version} · ${mName(p.createdBy)} · ${timeAgo(p.updatedAt || Date.now())}
       ${p.customerId ? `· 客户 <span class="linked" onclick="goto('customers')">${cName(p.customerId)}</span>` : ""}
-      ${p.relatedTaskId ? `· 任务 <span class="linked" onclick="goto('progress')">${tName(p.relatedTaskId)}</span>` : ""}</div>
+      ${p.relatedTaskId ? `· 任务 <span class="linked" onclick="goto('planexec')">${tName(p.relatedTaskId)}</span>` : ""}</div>
       <div class="row" style="margin-top:10px"><button class="btn btn-sm" onclick="openPropForm('${p.id}')">编辑/改版</button>
       <button class="btn btn-sm btn-danger" onclick="del('proposals','${p.id}')">删除</button></div></div>`).join("") || "<div class='empty'>暂无方案</div>"}</div>`;
 }
@@ -689,6 +810,132 @@ window.openForwardModal = (id) => {
     </div>
     <div class='muted' style='font-size:12px'>转发后客户 / 伙伴打开链接即可查看该素材（图文内容一并带出）。</div>`);
   $("#copyShare").onclick = () => { navigator.clipboard.writeText(shareUrl); toast("链接已复制，去转发吧"); };
+};
+
+function kanbanHTML() {
+  const cols = [{ s: "todo", l: "待办" }, { s: "doing", l: "进行中" }, { s: "done", l: "已完成" }];
+  const q = state.query;
+  return `<div class="kanban">${cols.map(c => {
+    const ts = state.db.tasks.filter(t => t.status === c.s && matches(t, q) && (taskCatTab === "全部" || t.category === taskCatTab));
+    return `<div class="kcol"><h4>${c.l}<span class="chip">${ts.length}</span></h4>${ts.map(t => `
+      <div class="ktask"><div class="t">${esc(t.title)}</div>
+      <div class="m"><b>责任人</b> ${ownerBadge(t.ownerId)}</div>
+      <div class="m">${({ 高: "<span class='chip red'>高优先级</span>", 中: "<span class='chip orange'>中优先级</span>", 低: "<span class='chip'>低优先级</span>" }[t.priority] || "")} ${t.category ? `<span class='chip brand'>${esc(t.category)}</span>` : ""} 计划：${esc((state.db.plans.find(p => p.id === t.planId) || {}).title || "—")}</div>
+      ${t.desc ? `<div class="m muted" style="font-size:12px;margin:2px 0">${esc(t.desc)}</div>` : ""}
+      <div class="m">截止 ${t.due || "—"} ${t.status !== "done" && t.due && t.due < new Date().toISOString().slice(0, 10) ? '<span class="chip red">⚠ 超期</span>' : ""} ${t.ownerId ? "" : '<span class="chip red">⚠ 待指派</span>'}</div>
+      <div class="bar"><i style="width:${t.progress || 0}%"></i></div>
+      <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px"><button class="btn btn-sm" onclick="cycleTask('${t.id}')">→ 推进</button>
+      <button class="btn btn-sm" onclick="openTaskDetail('${t.id}')">详情</button>
+      ${t.ownerId !== state.user ? `<button class="btn btn-sm btn-primary" onclick="claimTask('${t.id}')">领取</button>` : ""}
+      ${t.ownerId === state.user ? `<button class="btn btn-sm" onclick="openTransferModal('${t.id}')">转让给</button>` : ""}
+      <button class="btn btn-sm btn-danger" onclick="del('tasks','${t.id}')">删</button></div></div>`).join("") || "<div class='muted' style='font-size:12px'>空</div>"}</div>`;
+  }).join("")}</div>`;
+}
+
+function renderPlanExec(main) {
+  const me = state.user;
+  const plans = state.db.plans, tasks = state.db.tasks;
+  const myPlans = plans.filter(p => p.ownerId === me || (p.collaborators || []).includes(me));
+  const myTaskSet = new Set(tasks.filter(t => t.ownerId === me || canEditPlan(plans.find(p => p.id === t.planId))).map(t => t.id));
+  const myTasks = tasks.filter(t => myTaskSet.has(t.id));
+
+  const planCard = (p) => {
+    const collab = (p.collaborators || []);
+    const mine = p.ownerId === me || collab.includes(me);
+    const editable = canEditPlan(p);
+    return `<div class="pex-card ${mine ? "mine" : ""}">
+      <div class="pex-card-head"><b>${esc(p.title)}</b>${mine ? '<span class="chip brand">我的</span>' : ""}</div>
+      <div class="muted" style="font-size:12px">${esc(p.desc || "")}</div>
+      <div class="row" style="gap:8px;flex-wrap:wrap;margin:8px 0"><span class="chip ${statusChip(p.status)}">${p.status}</span><span class="muted">负责人 ${ownerBadge(p.ownerId)}</span></div>
+      ${collab.length ? `<div class="row" style="gap:4px;flex-wrap:wrap;margin-bottom:6px"><span class="muted" style="font-size:12px">协助：</span>${collab.map(c => ownerBadge(c)).join("")}</div>` : ""}
+      <div class="bar"><i style="width:${p.progress || 0}%"></i></div>
+      <div class="muted" style="font-size:12px;margin:4px 0">${p.start || "?"} → ${p.end || "?"} · ${p.progress || 0}%</div>
+      <div class="row" style="margin-top:8px;gap:6px;flex-wrap:wrap">
+        <button class="btn btn-sm" onclick="openPlanTasks('${p.id}')">看任务</button>
+        ${editable ? `<button class="btn btn-sm" onclick="openPlanForm('${p.id}')">编辑</button>` : ""}
+        ${(p.ownerId === me || state.role === "admin") ? `<button class="btn btn-sm btn-danger" onclick="del('plans','${p.id}')">删除</button>` : ""}
+      </div></div>`;
+  };
+  const taskRow = (t) => `<div class="pex-task"><div class="t">${esc(t.title)}</div>
+    <div class="m">${({ 高: "<span class='chip red'>高</span>", 中: "<span class='chip orange'>中</span>", 低: "<span class='chip'>低</span>" }[t.priority] || "")} <span class='chip brand'>${esc(t.category || "—")}</span> · 计划：${esc((plans.find(p => p.id === t.planId) || {}).title || "—")}</div>
+    <div class="bar"><i style="width:${t.progress || 0}%"></i></div>
+    <div class="row" style="margin-top:6px;gap:6px;flex-wrap:wrap">
+      <button class="btn btn-sm" onclick="openTaskDetail('${t.id}')">详情</button>
+      ${canEditTask(t) ? `<button class="btn btn-sm" onclick="openTaskForm('${t.id}')">编辑</button>` : ""}
+      ${(t.ownerId === me || state.role === "admin") ? `<button class="btn btn-sm btn-danger" onclick="del('tasks','${t.id}')">删</button>` : ""}
+    </div></div>`;
+
+  main.innerHTML = `<div class="page-head pex-head"><div><h2>🛰️ 计划与执行进度</h2><div class="sub">大计划 → 阶段任务 → 执行进度，全程实时同步；可邀请成员协作，对方「我的工作计划」自动出现并可编辑</div></div>
+    <div class="row"><button class="btn btn-primary" onclick="openPlanForm()">＋ 新建计划（可邀请成员）</button><button class="btn" onclick="openTaskForm()">＋ 新建任务</button></div></div>
+
+    <!-- 图表区 -->
+    <div class="grid cols-3" style="margin-bottom:16px">
+      <div class="card chart-card"><h3>📊 任务状态分布</h3><div class="chart-box"><canvas id="pexPieTasks"></canvas></div></div>
+      <div class="card chart-card"><h3>📈 计划进度走势</h3><div class="chart-box"><canvas id="pexTrend"></canvas></div></div>
+      <div class="card chart-card"><h3>🎯 计划状态分布</h3><div class="chart-box"><canvas id="pexPiePlans"></canvas></div></div>
+    </div>
+
+    <!-- 甘特图 -->
+    <div class="card pex-section" style="margin-bottom:16px"><div class="pex-section-head"><span class="pex-dot"></span>📊 甘特图时间线</div>
+      <div class="gantt-wrap"><div class="gantt">
+        ${plans.map(p => {
+          const allStarts = plans.map(x => x.start).filter(Boolean);
+          const allEnds = plans.map(x => x.end).filter(Boolean);
+          const gMin = allStarts.length ? new Date(Math.min(...allStarts.map(d => new Date(d)))) : new Date();
+          const gMax = allEnds.length ? new Date(Math.max(...allEnds.map(d => new Date(d)))) : new Date(Date.now() + 90*86400000);
+          const gRange = gMax - gMin || 1;
+          const left = ((new Date(p.start) - gMin) / gRange * 100);
+          const width = Math.max(((new Date(p.end) - gMin) / gRange * 100) - left, 3);
+          return `<div class="gantt-row"><div class="gantt-label" title="${esc(p.title)}">${esc(p.title)}</div><div class="gantt-bar-wrap"><div class="gantt-bar-bg"></div><div class="gantt-bar" style="left:${left}%;width:${width}%;${p.progress>=80?'background:var(--green)':p.progress>=50?'':'background:var(--orange)'}" title="${esc(p.title)} · ${p.progress}% · ${p.status}" onclick="openPlanForm('${p.id}')">${p.progress}%</div></div></div>`;
+        }).join("")}
+      </div></div>
+    </div>
+
+    <div class="pex-section"><div class="pex-section-head"><span class="pex-dot"></span>我的工作计划<span class="muted">（当前：${esc(mName(me))}）</span></div>
+      ${myPlans.length ? `<div class="grid cols-2">${myPlans.map(planCard).join("")}</div>` : '<div class="empty">你还没有负责或被邀请的计划。点「新建计划」并邀请成员即可协作。</div>'}
+      ${myTasks.length ? `<div style="margin-top:12px"><div class="muted" style="margin-bottom:6px">我负责的执行任务（${myTasks.length}）</div>${myTasks.map(taskRow).join("")}</div>` : ""}
+    </div>
+
+    <div class="pex-section"><div class="pex-section-head"><span class="pex-dot"></span>全部大计划（${plans.length}）</div>
+      <div class="grid cols-2">${plans.map(planCard).join("")}</div>
+    </div>
+
+    <div class="pex-section"><div class="pex-section-head"><span class="pex-dot"></span>执行进度看板</div>${kanbanHTML()}</div>`;
+
+  // 渲染图表
+  setTimeout(() => {
+    const tDone = tasks.filter(t => t.status === "done").length;
+    const tDoing = tasks.filter(t => t.status === "doing").length;
+    const tTodo = tasks.filter(t => t.status === "todo").length;
+    makeChart("pexPieTasks", "doughnut", {
+      labels: ["已完成", "进行中", "待启动"],
+      datasets: [{ data: [tDone, tDoing, tTodo], backgroundColor: [CHART_COLORS.green, CHART_COLORS.brand, "#e7e9f0"], borderWidth: 0 }]
+    }, { plugins: { legend: { position: "bottom" } }, cutout: "60%" });
+
+    makeChart("pexTrend", "line", {
+      labels: plans.map(p => p.title.slice(0, 8)),
+      datasets: [{ label: "进度%", data: plans.map(p => p.progress || 0), borderColor: CHART_COLORS.brand, backgroundColor: "rgba(124,92,255,.1)", tension: .3, fill: true }]
+    }, { plugins: { legend: { position: "bottom" } }, scales: { y: { beginAtZero: true, max: 100, grid: { color: CHART_COLORS.grid } } } });
+
+    const pActive = plans.filter(p => p.status === "进行中").length;
+    const pDone = plans.filter(p => p.status === "已完成").length;
+    const pPause = plans.filter(p => p.status === "暂停").length;
+    makeChart("pexPiePlans", "pie", {
+      labels: ["进行中", "已完成", "暂停"],
+      datasets: [{ data: [pActive, pDone, pPause], backgroundColor: [CHART_COLORS.brand, CHART_COLORS.green, CHART_COLORS.orange], borderWidth: 0 }]
+    }, { plugins: { legend: { position: "bottom" } } });
+  }, 30);
+}
+
+window.openPlanTasks = (pid) => {
+  const p = (state.db.plans || []).find(x => x.id === pid); if (!p) return;
+  const ts = state.db.tasks.filter(t => t.planId === pid);
+  const body = ts.length ? ts.map(t => `<div class="card" style="margin:8px 0"><div class="row" style="justify-content:space-between"><b>${esc(t.title)}</b><span class="chip ${statusChip(t.status)}">${t.status}</span></div>
+    <div class="muted" style="font-size:12px">${ownerBadge(t.ownerId)} · ${t.category || "—"} · 截止 ${t.due || "—"} · ${t.progress || 0}%</div>
+    <div class="bar"><i style="width:${t.progress || 0}%"></i></div>
+    <div class="row" style="margin-top:6px;gap:6px">${canEditTask(t) ? `<button class="btn btn-sm" onclick="openTaskForm('${t.id}')">编辑</button>` : ""}<button class="btn btn-sm" onclick="openTaskDetail('${t.id}')">详情</button></div></div>`).join("")
+    : '<div class="empty">该计划下暂无任务</div>';
+  openModal("📋 " + p.title + " · 阶段任务", `<div class="muted" style="margin-bottom:8px">负责人 ${ownerBadge(p.ownerId)} · 协助：${(p.collaborators || []).map(c => ownerBadge(c)).join(" ") || "—"} · 进度 ${p.progress || 0}%</div>${body}`);
 };
 
 function renderProgress(main) {
@@ -1056,8 +1303,12 @@ function renderTeam(main) {
       </div>
     </div>
 
+    <!-- 工作负载 -->
+    <h3 style="margin:4px 0 10px">📊 成员工作负载</h3>
+    <div class="grid cols-3" id="teamWorkload"></div>
+
     <!-- 成员列表 -->
-    <h3 style="margin:4px 0 10px">👥 成员列表</h3>
+    <h3 style="margin:14px 0 10px">👥 成员列表</h3>
     <div class="grid cols-3" id="teamMemberList"></div>`;
   setTimeout(() => {
     const listEl = $("#teamMemberList");
@@ -1071,9 +1322,39 @@ function renderTeam(main) {
         <button class="btn btn-sm btn-danger" onclick="del('members','${m.id}')">移除</button></div></div></div>`;
       }).join("");
     }
+    const wlEl = $("#teamWorkload");
+    if (wlEl) {
+      wlEl.innerHTML = state.db.members.filter(m => matches(m, state.query)).map(m => {
+        const owned = state.db.plans.filter(p => p.ownerId === m.id).length;
+        const collab = state.db.plans.filter(p => (p.collaborators || []).includes(m.id)).length;
+        const tasks = state.db.tasks.filter(t => t.ownerId === m.id).length;
+        const doing = state.db.tasks.filter(t => t.ownerId === m.id && t.status !== "done").length;
+        return `<div class="card wl-card"><div class="row" style="gap:10px;align-items:center"><img src='mascot-head.png' class='mascot-img'><div><b>${esc(m.name)}</b><div class="muted" style="font-size:12px">${esc(m.role)}</div></div></div>
+          <div class="wl-stats"><div><b>${owned}</b><span>负责计划</span></div><div><b>${collab}</b><span>协助计划</span></div><div><b>${tasks}</b><span>负责任务</span></div><div><b>${doing}</b><span>进行中</span></div></div>
+          <button class="btn btn-sm" style="margin-top:8px" onclick="openMemberWorkload('${m.id}')">查看工作计划与负责事项 →</button></div>`;
+      }).join("");
+    }
     renderChatMessages();
   }, 20);
 }
+window.openMemberWorkload = (mid) => {
+  const m = state.db.members.find(x => x.id === mid); if (!m) return;
+  const owned = state.db.plans.filter(p => p.ownerId === mid);
+  const collab = state.db.plans.filter(p => (p.collaborators || []).includes(mid));
+  const tasks = state.db.tasks.filter(t => t.ownerId === mid);
+  const planHTML = (p) => `<div class="card" style="margin:6px 0"><div class="row" style="justify-content:space-between"><b>${esc(p.title)}</b><span class="chip ${statusChip(p.status)}">${p.status}</span></div>
+    <div class="muted" style="font-size:12px">${(p.ownerId === mid) ? "负责" : "协助"} · 进度 ${p.progress || 0}% · ${ownerBadge(p.ownerId)} ${(p.collaborators || []).map(c => ownerBadge(c)).join(" ")}</div>
+    <div class="bar"><i style="width:${p.progress || 0}%"></i></div></div>`;
+  const taskHTML = (t) => `<div class="card" style="margin:6px 0"><div class="row" style="justify-content:space-between"><b>${esc(t.title)}</b><span class="chip ${statusChip(t.status)}">${t.status}</span></div>
+    <div class="muted" style="font-size:12px">${t.category || "—"} · 截止 ${t.due || "—"} · ${t.progress || 0}% · 计划 ${esc((state.db.plans.find(p => p.id === t.planId) || {}).title || "—")}</div>
+    <div class="bar"><i style="width:${t.progress || 0}%"></i></div></div>`;
+  openModal("📊 " + m.name + " · 工作计划与负责事项", `
+    <div class="sub">负责计划 ${owned.length} · 协助计划 ${collab.length} · 负责任务 ${tasks.length}</div>
+    <h4 style="margin:10px 0 4px">负责 / 协助的计划</h4>
+    ${[...owned, ...collab].map(planHTML).join("") || '<div class="empty">暂无计划</div>'}
+    <h4 style="margin:10px 0 4px">负责的任务</h4>
+    ${tasks.map(taskHTML).join("") || '<div class="empty">暂无任务</div>'}`);
+};
 window.openInvite = () => {
   const link = location.origin + "/?join=1";
   openModal("邀请成员加入协作", `<p class="muted">把下面链接发给<b>其他 WorkBuddy 用户</b>，他们打开后填写身份即可作为协作成员加入，所有改动通过后端<b>实时同步</b>。</p>
@@ -1377,7 +1658,7 @@ window.runAITask = async (id) => {
     const fb = r.feedback || {};
     const map = { proposals: "方案", docs: "学习库课程", tasks: "任务说明", followups: "客户随访", media: "媒体库素材", aiTasks: "AI 任务结果" };
     const label = esc(fb.label || map[fb.collection] || "数据");
-    const route = fb.collection === "proposals" ? "proposals" : fb.collection === "docs" ? "docs" : fb.collection === "followups" ? "customers" : fb.collection === "media" ? "media" : fb.collection === "tasks" ? "progress" : "aidesk";
+    const route = fb.collection === "proposals" ? "proposals" : fb.collection === "docs" ? "docs" : fb.collection === "followups" ? "customers" : fb.collection === "media" ? "media" : fb.collection === "tasks" ? "planexec" : "aidesk";
     toast("🤖 已自动执行，结果已写入【" + label + "】");
     openModal("🤖 自动执行完成 · " + esc(r.task.title || ""), `<p class="muted">已一键生成 AI 结果，并自动回写至「${label}」，与其他模块数据互通；可在对应模块查看。</p>
       <div class="doc-body" style="white-space:pre-wrap;max-height:52vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:12px;background:#fafbff">${esc(r.task.result || "")}</div>
@@ -1805,7 +2086,7 @@ function applyReadonly() {
     banner.classList.toggle("hidden", state.canEdit || dismissed);
   }
   if (state.canEdit) return;
-  const RE = /(openPlanForm|openPropForm|openMediaForm|openTaskForm|openFeedbackForm|openCustomerForm|openFollowForm|openReportForm|openMemberForm|openExpertForm|openToolForm|openAITaskForm|openDocForm|openTransferModal|claimTask|del\(|openForwardModal|openPushModal|saveAsTask|openPushCenter|openInvite|sendChat)/;
+  const RE = /(openPropForm|openMediaForm|openFeedbackForm|openCustomerForm|openFollowForm|openReportForm|openMemberForm|openExpertForm|openToolForm|openAITaskForm|openDocForm|openTransferModal|claimTask|del\(|openForwardModal|openPushModal|saveAsTask|openPushCenter|openInvite|sendChat)/;
   document.querySelectorAll("button[onclick],a[onclick]").forEach(el => {
     if (RE.test(el.getAttribute("onclick") || "")) el.style.display = "none";
   });
@@ -1859,3 +2140,12 @@ window.buddyAssign = async () => {
     if (panel && !panel.classList.contains("hidden") && !panel.contains(e.target) && e.target !== fab && !fab.contains(e.target)) panel.classList.add("hidden");
   });
 })();
+
+// ---------- Cmd+K 快捷搜索 ----------
+document.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+    e.preventDefault();
+    const s = document.getElementById("globalSearch");
+    if (s) { s.focus(); s.select(); }
+  }
+});

@@ -329,6 +329,35 @@ function getUserRole(username) {
   return u ? u.role : null;
 }
 
+// 计划级写权限：计划的 owner 或协助成员（collaborators），可编辑该计划及其下任务；创建者自动成为 owner
+// 兼容成员 id 命名（登录用户名可能等于成员 id，或带 m_ 前缀）
+function planTaskWriteAllowed(p, req) {
+  const uid = req.auth.user;
+  const ids = [uid, "m_" + uid];
+  const m = String(p).match(/^\/(\w+)(?:\/([^/]+))?/);
+  const col = m && m[1], id = m && m[2];
+  const isOwner = (ownerId) => ids.includes(ownerId);
+  const isCollab = (plan) => !!(plan && (isOwner(plan.ownerId) || (plan.collaborators || []).some(c => ids.includes(c))));
+  if (col === "plans") {
+    if (req.method === "POST") return true; // 创建者成为 owner
+    const plan = getCol("plans").find(x => x.id === id);
+    if (!plan) return false;
+    if (req.method === "DELETE") return isOwner(plan.ownerId) || req.auth.role === "admin";
+    return isCollab(plan);
+  }
+  if (col === "tasks") {
+    if (req.method === "POST") {
+      const pid = req.body && req.body.planId;
+      return isCollab(getCol("plans").find(x => x.id === pid));
+    }
+    const t = getCol("tasks").find(x => x.id === id);
+    if (!t) return false;
+    if (req.method === "DELETE") return isOwner(t.ownerId) || req.auth.role === "admin";
+    return isOwner(t.ownerId) || isCollab(getCol("plans").find(x => x.id === t.planId));
+  }
+  return false;
+}
+
 // 统一登录：名字 + 密码
 //  - 管理员账号（ADMIN_USERS）+ 管理员密码 → admin，直接获得全部权限（免审批）
 //  - 成员：任意名字 + 成员密码 → role=user（只读，自动建号并提交待审批申请）
@@ -381,12 +410,15 @@ app.use("/api", (req, res, next) => {
   payload.role = latestRole;
   req.auth = payload;
   console.log(`[AUTH] ${req.method} ${p} -> user=${payload.user} role=${latestRole}`);
-  // 写操作需要 editor 或 admin；申请/审批类接口由路由层自行校验角色
+  // 写操作需要 editor 或 admin；计划/任务额外允许 owner 与协助成员（数据实时共享、协作编辑）
   if (["POST", "PUT", "DELETE", "PATCH"].includes(req.method)) {
     // /apply-access（申请编辑权限）与 /access-requests/*（审批）放行，角色在路由层校验
     const openWrite = p === "/apply-access" || p.startsWith("/access-requests") || p === "/me/rename";
     if (!openWrite && !["editor", "admin"].includes(latestRole)) {
-      return res.status(403).json({ error: "无修改权限：请先申请并获得编辑权限" });
+      // 计划/任务：owner 或协助成员可在其参与范围内写入
+      if (!planTaskWriteAllowed(p, req)) {
+        return res.status(403).json({ error: "无修改权限：该计划/任务仅创建者或协助成员可编辑" });
+      }
     }
   }
   next();
