@@ -8,3 +8,7 @@ data/db.*
 
 *.log
 public/uploads/
+
+# 运行时数据（非源码，不入库）
+data/ai-files/
+data/buddy-memory.json

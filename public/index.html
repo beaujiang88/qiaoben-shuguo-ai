@@ -17,7 +17,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="数果工作台" />
   <meta name="mobile-web-app-capable" content="yes" />
-  <link rel="stylesheet" href="styles.css?v=20260823h" />
+  <link rel="stylesheet" href="styles.css?v=20260823m" />
 </head>
 <body>
   <!-- 登录层（注册 + 登录 + 申请审批） -->
@@ -103,24 +103,25 @@
     </div>
   </div>
 
-  <!-- 助理Buddy 悬浮助手 -->
-  <div id="buddyFab" class="buddy-fab" title="助理Buddy · 指派 AI 任务" style="background:url('mascot-head.png') center/cover;border-radius:50%;box-shadow:0 10px 28px rgba(124,92,255,.45),0 0 0 3px rgba(124,92,255,.2)"></div>
+  <!-- 助理Buddy 悬浮助手（全能 AI 对话入口） -->
+  <div id="buddyFab" class="buddy-fab" title="助理Buddy · 全能 AI 助手" style="background:url('mascot-head.png') center/cover;border-radius:50%;box-shadow:0 10px 28px rgba(124,92,255,.45),0 0 0 3px rgba(124,92,255,.2)"></div>
   <div id="buddyPanel" class="buddy-panel hidden">
-    <div class="buddy-head" style="background:linear-gradient(135deg,#7c5cff,#5b8def);display:flex;align-items:center;gap:10px"><div style="width:36px;height:36px;border-radius:50%;background:url('mascot-head.png') center/cover;flex-shrink:0;border:2px solid rgba(255,255,255,.4)"></div><span>🐷 助理Buddy</span><button id="buddyClose" class="x">✕</button></div>
-    <div class="buddy-body">
-      <div style="text-align:center;margin-bottom:8px"><img src='mascot-body.png' style="width:140px;height:auto;object-fit:contain"></div>
-      <div class="muted" style="font-size:12px;margin-bottom:8px">用一句话指派任务，AI 直通主对话（斜杠喵）直接执行。</div>
-      <textarea id="buddyInput" placeholder="例如：帮我写一份门店肠道测评 SOP…"></textarea>
-      <div class="row" style="gap:6px;flex-wrap:wrap;margin:8px 0">
+    <div class="buddy-head" style="background:linear-gradient(135deg,#7c5cff,#5b8def);display:flex;align-items:center;gap:10px"><div style="width:36px;height:36px;border-radius:50%;background:url('mascot-head.png') center/cover;flex-shrink:0;border:2px solid rgba(255,255,255,.4)"></div><span>助理Buddy · 全能 AI</span><button id="buddyClose" class="x">✕</button></div>
+    <div class="buddy-body" style="display:flex;flex-direction:column">
+      <div id="buddyMsgs"></div>
+      <div id="buddyAttZone"></div>
+      <textarea id="buddyInput" placeholder="随便问：写方案、做分析、出脚本、聊业务、查知识…" style="min-height:52px"></textarea>
+      <div class="row" style="gap:6px;flex-wrap:wrap;margin:8px 0 6px">
         <button class="btn btn-sm" onclick="buddyQuick('帮我写一份肠道健康管理项目方案')">✍️ 写方案</button>
         <button class="btn btn-sm" onclick="buddyQuick('汇总本周客户随访与检测指标变化')">📊 做分析</button>
-        <button class="btn btn-sm" onclick="buddyQuick('生成一条肠道健康科普短视频脚本')">🎬 生成脚本</button>
+        <button class="btn btn-sm" onclick="buddyQuick('生成一条肠道健康科普短视频脚本')">🎬 出脚本</button>
+        <button class="btn btn-sm" style="margin-left:auto" onclick="buddyClear()" title="清空 Buddy 的对话记忆">🗑 清空记忆</button>
       </div>
-      <button class="btn btn-primary" id="buddyAssign" style="width:100%">🚀 指派并执行</button>
+      <button class="btn btn-primary" id="buddySend" style="width:100%">🚀 发送（Enter）</button>
     </div>
   </div>
 
   <script src="vendor/chart.umd.js"></script>
-  <script src="app.js?v=20260823h"></script>
+  <script src="app.js?v=20260823p"></script>
 </body>
 </html>

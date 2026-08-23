@@ -10,6 +10,8 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import multer from "multer";
+import { execFile } from "child_process";
+import { promisify } from "util";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, "data", "db.json");
@@ -17,6 +19,132 @@ const PUBLIC_DIR = path.join(__dirname, "public");
 const PORT = process.env.PORT || 3088;
 // 云端部署：绑定全部网卡（0.0.0.0），由 PaaS/容器映射外部端口
 const HOST = process.env.HOST || "0.0.0.0";
+
+// ---------- AI 多模态输入：本地文件上传与文本提取 ----------
+const AI_FILES_DIR = path.join(__dirname, "data", "ai-files");
+fs.mkdirSync(AI_FILES_DIR, { recursive: true });
+const AI_EXTRACT_CACHE = path.join(AI_FILES_DIR, "extracted.json");
+function extractCacheAll() { try { return JSON.parse(fs.readFileSync(AI_EXTRACT_CACHE, "utf8")); } catch { return {}; } }
+function extractCachePut(id, rec) { const all = extractCacheAll(); all[id] = rec; fs.writeFileSync(AI_EXTRACT_CACHE, JSON.stringify(all)); }
+function extractCacheGet(id) { return extractCacheAll()[id] || null; }
+const _execFile = promisify(execFile);
+const _jxaTimeout = 60000;
+function _safe(pathStr) { return pathStr.replace(/'/g, "\\'"); }
+function _ext(name) { return (path.extname(name || "").toLowerCase() || ""); }
+function fileKindByExt(ext) {
+  if ([".txt",".md",".csv",".json",".log",".xml",".htm",".html"].includes(ext)) return "text";
+  if ([".doc",".docx",".rtf",".webarchive",".odt"].includes(ext)) return "doc";
+  if ([".pdf"].includes(ext)) return "pdf";
+  if ([".xlsx",".xls"].includes(ext)) return "sheet";
+  if ([".pptx",".ppt"].includes(ext)) return "slides";
+  if ([".png",".jpg",".jpeg",".gif",".bmp",".tiff",".tif",".webp",".heic",".heif"].includes(ext)) return "image";
+  return "other";
+}
+async function extractDocxText(filePath) {
+  try {
+    const { stdout } = await _execFile("textutil", ["-convert", "txt", "-stdout", filePath], { timeout: 20000, encoding: "utf8" });
+    return { text: stdout || "", engine: "textutil" };
+  } catch (e) { return { text: "", engine: "textutil", error: e.message }; }
+}
+async function extractSheetText(filePath) {
+  try {
+    // 优先 sharedStrings，fallback 第一个 worksheet
+    let out = "";
+    try { const { stdout } = await _execFile("unzip", ["-p", filePath, "xl/sharedStrings.xml"], { timeout: 15000, encoding: "utf8" }); out = stdout; } catch {}
+    if (!out) {
+      try { const { stdout } = await _execFile("unzip", ["-p", filePath, "xl/worksheets/sheet1.xml"], { timeout: 15000, encoding: "utf8" }); out = stdout; } catch {}
+    }
+    const text = out.replace(/<[^>]+>/g, "").replace(/\n{3,}/g, "\n\n").trim();
+    return { text, engine: "unzip-xlsx" };
+  } catch (e) { return { text: "", engine: "unzip-xlsx", error: e.message }; }
+}
+async function extractSlidesText(filePath) {
+  try {
+    const { stdout } = await _execFile("sh", ["-c", `unzip -p '${_safe(filePath)}' "ppt/slides/slide*.xml" | sed 's/<[^>]*>//g'`], { timeout: 20000, encoding: "utf8" });
+    const text = (stdout || "").replace(/\n{3,}/g, "\n\n").trim();
+    return { text, engine: "unzip-pptx" };
+  } catch (e) { return { text: "", engine: "unzip-pptx", error: e.message }; }
+}
+async function extractPdfText(filePath, outPath) {
+  const jxa = `ObjC.import('Quartz');ObjC.import('Foundation');
+const url = $.NSURL.fileURLWithPath('${_safe(filePath)}');
+const doc = $.PDFDocument.alloc.initWithURL(url);
+if (!doc) { console.log('__ERR__:cannot open'); } else {
+  let out = '';
+  for (let i = 0; i < doc.pageCount; i++) { out += (doc.pageAtIndex(i).string ? doc.pageAtIndex(i).string.js : '') + '\\n'; }
+  $.NSString.alloc.initWithUTF8String(out).writeToFileAtomicallyEncodingError('${_safe(outPath)}', true, $.NSUTF8StringEncoding, null);
+  console.log('__OK__');
+}`;
+  const tmp = path.join(AI_FILES_DIR, "tmp_" + nanoid(8) + ".jxa");
+  fs.writeFileSync(tmp, jxa, "utf8");
+  try {
+    await _execFile("osascript", ["-l", "JavaScript", tmp], { timeout: _jxaTimeout, encoding: "utf8" });
+    if (fs.existsSync(outPath)) { const t = fs.readFileSync(outPath, "utf8"); return { text: t, engine: "pdfkit" }; }
+    return { text: "", engine: "pdfkit", error: "no output" };
+  } catch (e) { return { text: "", engine: "pdfkit", error: e.message }; } finally { try { fs.unlinkSync(tmp); } catch {} }
+}
+async function extractImageOcr(filePath, outPath) {
+  // 若格式非 PNG/JPG，先 sips 转成 PNG（OCR 兼容性更好）
+  let src = filePath;
+  const ext = _ext(filePath);
+  if (ext !== ".png" && ext !== ".jpg" && ext !== ".jpeg") {
+    const tmpPng = path.join(AI_FILES_DIR, "tmp_" + nanoid(8) + ".png");
+    try {
+      await _execFile("sips", ["-s", "format", "png", filePath, "--out", tmpPng], { timeout: 15000 });
+      src = tmpPng;
+    } catch {}
+  }
+  const jxa = `ObjC.import('Vision');ObjC.import('Foundation');
+const imgURL = $.NSURL.fileURLWithPath('${_safe(src)}');
+const handler = $.VNImageRequestHandler.alloc.initWithURLOptions(imgURL, ObjC.wrap({}));
+const req = $.VNRecognizeTextRequest.alloc.initWithCompletionHandler(function(){});
+req.recognitionLevel = 'VNRequestTextRecognitionLevelAccurate';
+req.usesLanguageCorrection = true;
+req.recognitionLanguages = ['zh-Hans','en-US'];
+const ok = handler.performRequestsError(ObjC.wrap([req]), null);
+let lines = [];
+if (ok) {
+  const obs = req.results;
+  for (let i = 0; i < obs.count; i++) {
+    const o = obs.objectAtIndex(i);
+    const cands = o.topCandidates(1);
+    if (cands && cands.count > 0) lines.push(cands.objectAtIndex(0).string.js);
+  }
+}
+const text = lines.join('\\n');
+$.NSString.alloc.initWithUTF8String(text).writeToFileAtomicallyEncodingError('${_safe(outPath)}', true, $.NSUTF8StringEncoding, null);
+console.log('__OK__ lines=' + lines.length);`;
+  const tmp = path.join(AI_FILES_DIR, "tmp_" + nanoid(8) + ".jxa");
+  fs.writeFileSync(tmp, jxa, "utf8");
+  try {
+    await _execFile("osascript", ["-l", "JavaScript", tmp], { timeout: _jxaTimeout, encoding: "utf8" });
+    if (fs.existsSync(outPath)) { const t = fs.readFileSync(outPath, "utf8"); return { text: t, engine: "vision-ocr" }; }
+    return { text: "", engine: "vision-ocr", error: "no output" };
+  } catch (e) { return { text: "", engine: "vision-ocr", error: e.message }; } finally {
+    try { fs.unlinkSync(tmp); } catch {}
+    if (src !== filePath) { try { fs.unlinkSync(src); } catch {} }
+  }
+}
+async function extractFileText(filePath) {
+  const ext = _ext(filePath);
+  const kind = fileKindByExt(ext);
+  const outPath = path.join(AI_FILES_DIR, "tmp_extract_" + nanoid(8) + ".txt");
+  if (kind === "text") {
+    try { const t = fs.readFileSync(filePath, "utf8"); return { text: t, engine: "read" }; } catch (e) { return { text: "", engine: "read", error: e.message }; }
+  }
+  if (kind === "doc") return extractDocxText(filePath);
+  if (kind === "sheet") return extractSheetText(filePath);
+  if (kind === "slides") return extractSlidesText(filePath);
+  if (kind === "pdf") { const r = await extractPdfText(filePath, outPath); try { fs.unlinkSync(outPath); } catch {} return r; }
+  if (kind === "image") { const r = await extractImageOcr(filePath, outPath); try { fs.unlinkSync(outPath); } catch {} return r; }
+  return { text: "", engine: "none", error: "不支持的文件类型：" + ext };
+}
+function fmtAttachments(atts) {
+  if (!Array.isArray(atts) || !atts.length) return "";
+  return "\n\n【参考资料（用户提供）】\n" + atts.map((a, i) =>
+    `—— 附件${i + 1}：${a.name || "未命名"} ——\n${String(a.text || "").slice(0, 12000) || "（该附件未能提取到文字内容）"}`
+  ).join("\n\n");
+}
 
 // 头像配色（新成员自动分配）
 const MEMBER_COLORS = ["#7c5cff", "#1e9e6a", "#e8833a", "#2f80ed", "#e0533d", "#16a085", "#8e44ad", "#d35400"];
@@ -27,7 +155,7 @@ const COLLECTIONS = [
   "members", "plans", "tasks", "proposals", "feedback",
   "customers", "experts", "tools", "aiTasks", "docs", "events",
   "followups", "reports", "media", "messages", "badges",
-  "users", "accessRequests", "shares", "chatRooms"
+  "users", "accessRequests", "shares", "chatRooms", "drafts"
 ];
 
 function seed() {
@@ -240,6 +368,7 @@ function loadDB() {
     return db;
   } catch {
     const db = seed();
+    for (const c of COLLECTIONS) if (!db[c]) db[c] = [];
     saveDB(db);
     return db;
   }
@@ -302,6 +431,41 @@ app.post("/api/upload", upload.single("file"), (req, res) => {
   if (!payload || !["editor", "admin"].includes(payload.role)) return res.status(403).json({ error: "仅协作者/管理员可上传" });
   if (!req.file) return res.status(400).json({ error: "未收到文件" });
   res.json({ url: "/uploads/" + req.file.filename, name: req.file.originalname, size: req.file.size });
+});
+
+// AI 多模态附件上传：任何登录成员可用，不公开，存入 data/ai-files
+const aiFileUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, AI_FILES_DIR),
+    filename: (req, file, cb) => { cb(null, "af_" + nanoid(8) + "_" + file.originalname.replace(/[^\w.\-]/g, "_")); },
+  }),
+  limits: { fileSize: 25 * 1024 * 1024 },
+});
+app.post("/api/ai/upload", aiFileUpload.single("file"), (req, res) => {
+  const auth = req.headers["authorization"] || "";
+  const tok = auth.startsWith("Bearer ") ? auth.slice(7) : null;
+  const payload = verifyToken(tok);
+  if (!payload) return res.status(401).json({ error: "未登录" });
+  if (!req.file) return res.status(400).json({ error: "未收到文件" });
+  const meta = { id: path.basename(req.file.filename).split("_")[1], name: req.file.originalname, path: req.file.path, size: req.file.size, kind: fileKindByExt(_ext(req.file.originalname)), by: payload.user, createdAt: Date.now() };
+  const idx = path.join(AI_FILES_DIR, "index.json");
+  let all = {}; try { all = JSON.parse(fs.readFileSync(idx, "utf8")); } catch {}
+  all[meta.id] = meta; fs.writeFileSync(idx, JSON.stringify(all));
+  res.json({ id: meta.id, name: meta.name, size: meta.size, kind: meta.kind });
+});
+// AI 附件文本提取（解析一次后缓存）
+app.post("/api/ai/extract", async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+  const idx = path.join(AI_FILES_DIR, "index.json");
+  let all = {}; try { all = JSON.parse(fs.readFileSync(idx, "utf8")); } catch {}
+  const out = [];
+  for (const id of ids) {
+    const meta = all[id]; if (!meta) { out.push({ id, error: "文件不存在" }); continue; }
+    let cached = extractCacheGet(id);
+    if (!cached) { cached = await extractFileText(meta.path); extractCachePut(id, { ...cached, at: Date.now() }); }
+    out.push({ id, name: meta.name, kind: meta.kind, text: cached.text, chars: String(cached.text || "").length, engine: cached.engine || "", error: cached.error || "" });
+  }
+  res.json(out);
 });
 
 // 健康检查（公开，供 PaaS/容器探活）
@@ -428,8 +592,12 @@ app.use("/api", (req, res, next) => {
     // /apply-access（申请编辑权限）与 /access-requests/*（审批）放行，角色在路由层校验
     const openWrite = p === "/apply-access" || p.startsWith("/access-requests") || p === "/me/rename";
     // 聊天是基础协作能力：消息发送/建群对全体登录成员开放（群解散在 col 层由群主/管理员校验）
-    const chatWrite = p === "/messages" || p === "/chatRooms" || /^\/messages\/|^\/chatRooms\//.test(p);
-    if (!openWrite && !chatWrite && !["editor", "admin"].includes(latestRole)) {
+    const chatWrite = p === "/messages" || p === "/chatRooms" || p.startsWith("/buddy") || /^\/messages\/|^\/chatRooms\//.test(p);
+    // 想法库草稿是个人空间：全体登录成员可写自己的草稿（前端按 ownerId 过滤展示）
+    const draftWrite = p === "/drafts" || p.startsWith("/drafts/");
+    // 收件箱已读是个人操作：全体登录成员可标记自己的推送已读（全盘检查修复：原版成员会被拦成 403）
+    const inboxRead = p.startsWith("/inbox/");
+    if (!openWrite && !chatWrite && !draftWrite && !inboxRead && !["editor", "admin"].includes(latestRole)) {
       // 计划/任务：owner 或协助成员可在其参与范围内写入
       if (!planTaskWriteAllowed(p, req)) {
         return res.status(403).json({ error: "无修改权限：该计划/任务仅创建者或协助成员可编辑" });
@@ -667,6 +835,14 @@ for (const col of COLLECTIONS) {
   app.put(`/api/${col}/:id`, (req, res) => {
     const item = find(col, req.params.id);
     if (!item) return res.status(404).json({ error: "not found" });
+    // 方案改版归档：内容变化时旧版本自动进 versions 历史，改版不丢内容
+    if (col === "proposals" && req.body && typeof req.body.content === "string" && req.body.content !== item.content) {
+      item.versions = Array.isArray(item.versions) ? item.versions : [];
+      const oldV = Number(item.version) || 1;
+      if (typeof item.content === "string" && item.content.trim() && !item.versions.some(v => v.v === oldV)) {
+        item.versions.push({ v: oldV, content: item.content, note: req.body._versionNote || "", by: req.body._actor || item.createdBy, updatedAt: item.updatedAt || Date.now() });
+      }
+    }
     Object.assign(item, req.body, { id: item.id });
     if (item.updatedAt !== undefined) item.updatedAt = Date.now();
     mutate(col, "update", item, req.body._actor);
@@ -785,17 +961,117 @@ function generateContent({ kind, prompt, title, linkedType }) {
   return { result: genGeneric(p, title) };
 }
 
-// 表单「AI 协助」：生成草稿
-app.post("/api/ai/generate", (req, res) => {
-  res.json(generateContent(req.body || {}));
+// ---------- AI 生成统一入口：全部直通 WorkBuddy 本体模型能力，本地模板兜底 ----------
+// 说明：WorkBuddy 桌面端在本机启动 agent-cli 网关（discoverWorkBuddyGateway 动态发现），
+// /api/v1/llm/completions 可启动真实 Agent（大模型 + 联网搜索等工具）。
+// 网关不可用时回退到上方本地模板引擎，保证演示环境不中断。
+const AI_KIND_SYSTEM = {
+  proposal: "你是乔本·数果 AI 肠道健康管理项目的方案撰写专家。根据需求撰写商业方案/计划书草稿，Markdown 输出，包含：背景与目标、核心策略、执行步骤（含阶段排期）、关键指标 KPI、风险与合规、预算与资源。业务背景：菌群检测+AI解读+个性化干预（益生菌/膳食纤维/饮食）+随访闭环；B端渠道省代→市代→区代→门店→合伙人分级分润；随访节点第0/2/4/8周。招商不夸大收益、不承诺多级返利。",
+  doc: "你是乔本·数果的知识库课程设计师。根据需求编写培训课程/知识库文档正文，Markdown 格式，包含：课程目标、背景与定义、核心知识点、标准流程与操作要点、常见误区与合规红线、考核要点。内容结合肠道菌群健康管理业务（测评→解读→干预→随访闭环）。",
+  customer: "你是乔本·数果的客户运营专家。根据需求输出客户画像与跟进建议：需求洞察、健康关注点、价值分层（A/B/C级）、跟进节奏、转化路径、数据管理要点。",
+  followup: "你是乔本·数果的随访助手。根据需求起草随访记录：症状复盘、依从性、饮食执行、不良反应、下一步安排（第2/4/8周复测与方案微调）。口吻专业温和。",
+  media: "你是乔本·数果的新媒体内容专家。根据需求写文案/图文/短视频脚本：吸引人的标题、正文或分镜脚本、话题标签（#乔本肠道管家 等）、行动引导。风格亲切专业，适合私域与短视频平台。",
+  task: "你是乔本·数果的项目管理助手。根据需求起草任务说明：背景、交付物与验收标准、可落地的子步骤与里程碑、关联计划与推进方式、风险点提示。",
+  report: "你是乔本·数果的检测报告解读专家。根据需求输出菌群检测报告的指标解读与干预建议，用清晰的表格或分条列出指标、参考范围、实际状态与建议。",
+  feedback: "你是乔本·数果的数据分析师。根据需求输出数据洞察：趋势（环比/同比）、归因（渠道动销/门店转化/终端效果）、行动建议（异常指标预警与责任人）、数据到决策的闭环建议。",
+  generic: "你是乔本·数果 AI 肠道健康管理项目工作台的 AI 助理。根据需求生成结构化、可直接使用的中文草稿，结合「菌群检测+AI解读+个性化干预+随访闭环」业务模型。",
+  "proposal-rewrite": "你是乔本·数果 AI 肠道健康管理项目的方案改写专家。你将收到一份方案原文和一条改写指令，请基于原文进行改写：保留原文整体结构与有价值的信息，严格按指令调整相应部分，其余部分保持连贯。输出完整改写后的方案全文（Markdown），不要输出改写说明、对比或寒暄，直接给成品。",
+};
+async function aiComplete(kind, prompt, title, attachments) {
+  const gw = discoverWorkBuddyGateway();
+  if (!gw) return null;
+  try {
+    const sys = (AI_KIND_SYSTEM[kind] || AI_KIND_SYSTEM.generic) + "\n直接输出成品内容本身，不要寒暄、不要解释、不要「以下是」之类前缀。";
+    let q = (title ? "【标题/主题】" + title + "\n" : "") + "【需求】" + ((prompt || title || "").toString().trim() || "请生成相关内容草稿");
+    q += fmtAttachments(attachments);
+    const up = await fetch(gw + "/api/v1/llm/completions", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userPrompt: q, systemPrompt: sys, maxTurns: 3 }),
+    });
+    const j = await up.json().catch(() => null);
+    if (j && j.success === true && typeof j.text === "string" && j.text.trim()) return j.text.trim();
+    return null;
+  } catch { return null; }
+}
+async function aiGenerate(payload) {
+  const p = payload || {};
+  const k = p.kind || aiKindOf(p);
+  const text = await aiComplete(k, p.prompt, p.title, p.attachments);
+  if (text) {
+    const out = { result: text, engine: AI_ENGINE() };
+    if (k === "doc") { const t = genDoc(p.prompt, p.title); out.title = p.title || t.title; out.duration = t.duration; out.quiz = t.quiz; }
+    return out;
+  }
+  return { ...generateContent(p), engine: "local-template" };
+}
+
+// 表单「AI 协助」：生成草稿（直通 WorkBuddy 模型，模板兜底）
+app.post("/api/ai/generate", async (req, res) => {
+  const body = req.body || {};
+  const ids = Array.isArray(body.attachments) ? body.attachments : [];
+  const attachments = [];
+  if (ids.length) {
+    const idx = path.join(AI_FILES_DIR, "index.json");
+    let all = {}; try { all = JSON.parse(fs.readFileSync(idx, "utf8")); } catch {}
+    for (const id of ids.slice(0, 6)) {
+      const meta = all[id]; if (!meta) continue;
+      let cached = extractCacheGet(id); if (!cached) { cached = await extractFileText(meta.path); extractCachePut(id, { ...cached, at: Date.now() }); }
+      attachments.push({ name: meta.name, text: cached.text || "" });
+    }
+  }
+  res.json(await aiGenerate({ ...body, attachments }));
+});
+
+// 方案 AI 改写：基于指定版本原文 + 改写指令 → 产出新版本候选。
+// 不直接覆盖方案：由前端决定「存入想法库（私有打磨）」或「升版定稿（PUT 回写，自动归档旧版）」。
+// 方案 AI 改写：基于指定版本原文 + 改写指令 → 产出新版本候选。
+// 不直接覆盖方案：由前端决定「存入想法库（私有打磨）」或「升版定稿（PUT 回写，自动归档旧版）」。
+app.post("/api/proposals/:id/rewrite", async (req, res) => {
+  const p = find("proposals", req.params.id);
+  if (!p) return res.status(404).json({ error: "not found" });
+  const instruction = String((req.body || {}).instruction || "").trim();
+  if (!instruction) return res.status(400).json({ error: "请填写改写指令" });
+  const vs = Array.isArray(p.versions) ? p.versions : [];
+  const bv = Number((req.body || {}).baseVersion) || Number(p.version) || 1;
+  const hist = vs.find(v => v.v === bv);
+  const baseContent = hist ? hist.content : p.content;
+  let prompt = "【改写指令】" + instruction + "\n\n【方案原文（v" + bv + "）】\n" + (baseContent || "（原文为空）");
+  const ids = Array.isArray(req.body?.attachments) ? req.body.attachments : [];
+  const attachments = [];
+  if (ids.length) {
+    const idx = path.join(AI_FILES_DIR, "index.json");
+    let all = {}; try { all = JSON.parse(fs.readFileSync(idx, "utf8")); } catch {}
+    for (const id of ids.slice(0, 6)) {
+      const meta = all[id]; if (!meta) continue;
+      let cached = extractCacheGet(id); if (!cached) { cached = await extractFileText(meta.path); extractCachePut(id, { ...cached, at: Date.now() }); }
+      attachments.push({ name: meta.name, text: cached.text || "" });
+    }
+  }
+  prompt += fmtAttachments(attachments);
+  const text = await aiComplete("proposal-rewrite", prompt, p.title, attachments);
+  if (text) return res.json({ result: text, engine: AI_ENGINE(), baseVersion: bv });
+  // 本地兜底：网关不可用时给出可编辑的标记稿，保证流程不中断
+  const fallback = (baseContent || "") + "\n\n---\n【AI 改写待完成 · 基于 v" + bv + "】\n改写指令：" + instruction + "\n（AI 网关暂不可用，已保留原文并标记指令，稍后可重新改写）";
+  res.json({ result: fallback, engine: "local-template", baseVersion: bv });
 });
 
 // AI 任务台 / Buddy / 工具：一键自动执行，并把结果回写到对应数据/知识集合（数据相通）
-app.post("/api/aiTasks/:id/autorun", (req, res) => {
+app.post("/api/aiTasks/:id/autorun", async (req, res) => {
   const a = find("aiTasks", req.params.id);
   if (!a) return res.status(404).json({ error: "not found" });
   const k = aiKindOf(a);
-  const gen = generateContent({ kind: k, prompt: a.prompt, title: a.title, linkedType: a.linkedType });
+  const ids = Array.isArray(a.attachmentIds) ? a.attachmentIds : [];
+  const attachments = [];
+  if (ids.length) {
+    const idx = path.join(AI_FILES_DIR, "index.json");
+    let all = {}; try { all = JSON.parse(fs.readFileSync(idx, "utf8")); } catch {}
+    for (const id of ids.slice(0, 6)) {
+      const meta = all[id]; if (!meta) continue;
+      let cached = extractCacheGet(id); if (!cached) { cached = await extractFileText(meta.path); extractCachePut(id, { ...cached, at: Date.now() }); }
+      attachments.push({ name: meta.name, text: cached.text || "" });
+    }
+  }
+  const gen = await aiGenerate({ kind: k, prompt: a.prompt, title: a.title, linkedType: a.linkedType, attachments });
   a.status = "已完成";
   a.result = gen.result;
   a.updatedAt = Date.now();
@@ -904,7 +1180,7 @@ function genGutCover(title, seed) {
   return "/uploads/" + file;
 }
 // 产出 1 篇文章（主题轮换去重：全部用过则按时间最久未用的主题复用）
-function gutButlerRun(actor) {
+async function gutButlerRun(actor) {
   const used = new Set(getCol("media").filter(m => m.butler && typeof m.butlerTopic === "number").map(m => m.butlerTopic));
   let topicIdx = GUT_TOPICS.findIndex((_, i) => !used.has(i));
   if (topicIdx < 0) {
@@ -915,7 +1191,11 @@ function gutButlerRun(actor) {
   const tp = GUT_TOPICS[topicIdx] || GUT_TOPICS[0];
   const hook = GUT_HOOKS[Date.now() % GUT_HOOKS.length];
   const title = `${hook}关于${tp.t}，这 3 点最值得知道`;
-  const content = [
+  // 内容直通 WorkBuddy 模型改稿（检索+创作），失败回退本地模板
+  const aiText = await aiComplete("media",
+    `围绕「${tp.t}」写一篇乔本风格肠道健康科普图文（公众号/小红书风格），标题已定为《${title}》。\n必须覆盖的要点：\n1. ${tp.pts[0]}\n2. ${tp.pts[1]}\n3. ${tp.pts[2]}\n结构要求：吸引人的开头 → 三个核心要点（展开讲透）→ 乔本小贴士（测评→解读→干预→随访闭环）→ 打卡建议 → 文末注明科普不能替代诊疗。`,
+    title);
+  const content = aiText || [
     `【${tp.t} · 乔本风格科普】`,
     "",
     `很多人以为肠道问题离自己很远，其实 ${tp.pts[0].slice(0, 18)}……今天用 3 分钟讲清楚「${tp.t}」。`,
@@ -951,8 +1231,8 @@ function gutButlerRun(actor) {
   return m;
 }
 // 手动触发（编辑者/管理员）
-app.post("/api/ai/gut-butler/run", (req, res) => {
-  const m = gutButlerRun(req.auth ? "m_" + req.auth.user : "m_beau");
+app.post("/api/ai/gut-butler/run", async (req, res) => {
+  const m = await gutButlerRun(req.auth ? "m_" + req.auth.user : "m_beau");
   res.json({ ok: true, media: m, todayCount: getCol("media").filter(x => x.butler && x.butlerDate === todayStr()).length });
 });
 // 状态查询
@@ -965,11 +1245,129 @@ setInterval(() => {
   try {
     const today = getCol("media").filter(m => m.butler && m.butlerDate === todayStr()).length;
     if (!today) {
-      const m = gutButlerRun("m_beau");
-      console.log(`[肠道管家] 今日自动产出：《${m.title}》`);
+      gutButlerRun("m_beau").then(m => {
+        console.log(`[肠道管家] 今日自动产出：《${m.title}》`);
+      }).catch(e => console.error("[肠道管家] 自动产出失败:", e.message));
     }
   } catch (e) { console.error("[肠道管家] 自动产出失败:", e.message); }
 }, 60 * 60 * 1000);
+
+// ---------- 助理Buddy：直通 WorkBuddy（猪猪侠）本体 AI 能力 ----------
+// 原理：WorkBuddy 桌面主程序会在本机 127.0.0.1 随机端口启动 agent-cli gateway，
+// 其中 POST /api/v1/llm/completions 免鉴权（仅本机可访问），可启动真实 Agent
+// （模型 + 联网搜索等工具）一次性应答。端口随 WorkBuddy 重启而变化，
+// 因此每次请求时扫描 ~/.workbuddy/sessions/*.json 动态发现常驻 host 网关。
+// 可用环境变量 BUDDY_GATEWAY_URL 强制指定（如 http://127.0.0.1:49426）。
+const AI_ENGINE = () => (process.env.AI_BACKEND === "dsh" ? "dsh" : "workbuddy");
+const BUDDY_SYSTEM = `你是「助理Buddy」，乔本·数果 AI 肠道健康管理项目工作台里的全能 AI 助理，背后直通 WorkBuddy 的完整 AI 能力（大模型 + 联网搜索等工具）。
+业务背景：项目以「菌群检测 + AI 解读 + 个性化干预（益生菌/膳食纤维/饮食）+ 随访闭环」为核心服务；B 端渠道为 省代→市代→区代→门店→合伙人 分级分润，C 端做会员订阅与私域运营；随访节点第 0/2/4/8 周。
+你的能力：写作（方案/计划书/话术/文案/短视频脚本）、分析（数据/客户/市场）、答疑（肠道健康科普/项目业务/系统使用）、头脑风暴，用户问什么答什么，不限定格式。
+回答要求：直接给结果，中文，简洁有条理；健康科普注明「不能替代诊疗」；涉及招商不夸大收益、不承诺多级返利。`;
+// AI 引擎开关（DSH 移植版）：
+//   AI_BACKEND=dsh  —— 走 DSH 内置模型路由（AI 桥插件在 http://127.0.0.1:3080/qb-ai，见 DSH_AI_URL）
+//   AI_BACKEND=workbuddy（默认）—— 走 WorkBuddy 桌面网关（原逻辑）
+// 两者对上层完全透明：都是 POST {userPrompt, systemPrompt, maxTurns} → {success, text}。
+function discoverWorkBuddyGateway() {
+  if (process.env.AI_BACKEND === "dsh") {
+    return (process.env.DSH_AI_URL || "http://127.0.0.1:3080/qb-ai").replace(/\/+$/, "");
+  }
+  if (process.env.BUDDY_GATEWAY_URL) return process.env.BUDDY_GATEWAY_URL.replace(/\/+$/, "");
+  try {
+    const dir = path.join(process.env.HOME || process.env.USERPROFILE || ".", ".workbuddy", "sessions");
+    const now = Date.now();
+    const cands = fs.readdirSync(dir).filter(f => f.endsWith(".json")).map(f => {
+      try {
+        const j = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8"));
+        // 只挑常驻 host 网关（sessionId 形如 interactive-<pid>，心跳 60 秒内视为存活）
+        if (j.endpoint && /^interactive-\d+$/.test(j.sessionId || "") && now - (j.lastHeartbeat || 0) < 60000) return j;
+      } catch {}
+      return null;
+    }).filter(Boolean).sort((a, b) => (b.lastHeartbeat || 0) - (a.lastHeartbeat || 0));
+    return cands[0]?.endpoint || null;
+  } catch { return null; }
+}
+// ---------- 助理Buddy：持久记忆（跨会话/刷新保留对话，按用户分档） ----------
+const BUDDY_MEM_FILE = path.join(__dirname, "data", "buddy-memory.json");
+function buddyMemAll() {
+  try { return JSON.parse(fs.readFileSync(BUDDY_MEM_FILE, "utf8")); } catch { return {}; }
+}
+function buddyMemWrite(all) {
+  try {
+    fs.mkdirSync(path.dirname(BUDDY_MEM_FILE), { recursive: true });
+    fs.writeFileSync(BUDDY_MEM_FILE, JSON.stringify(all));
+  } catch (e) { console.log("[Buddy] 记忆写入失败:", e.message); }
+}
+app.get("/api/buddy/history", (req, res) => {
+  res.json(buddyMemAll()[req.auth.user] || []);
+});
+app.put("/api/buddy/history", (req, res) => {
+  const msgs = (Array.isArray(req.body?.messages) ? req.body.messages : [])
+    .filter(m => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string" && m.content.trim())
+    .map(m => ({ role: m.role, content: m.content.slice(0, 20000), ...(m.docId ? { docId: m.docId } : {}), ...(m.planId ? { planId: m.planId } : {}), ...(m.draftId ? { draftId: m.draftId } : {}) }))
+    .slice(-100);
+  const all = buddyMemAll();
+  all[req.auth.user] = msgs;
+  buddyMemWrite(all);
+  res.json({ ok: true, count: msgs.length });
+});
+app.delete("/api/buddy/history", (req, res) => {
+  const all = buddyMemAll();
+  delete all[req.auth.user];
+  buddyMemWrite(all);
+  res.json({ ok: true });
+});
+app.post("/api/buddy/chat", async (req, res) => {
+  const history = (Array.isArray(req.body?.messages) ? req.body.messages : [])
+    .filter(m => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string" && m.content.trim())
+    .slice(-20);
+  if (!history.some(m => m.role === "user")) return res.status(400).json({ error: "请输入内容" });
+  const gateway = discoverWorkBuddyGateway();
+  if (!gateway) {
+    return res.status(503).json({ error: "AI 引擎未就绪：请确认 DSH（AI_BACKEND=dsh）或 WorkBuddy 桌面端（AI_BACKEND=workbuddy）正在运行。" });
+  }
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache");
+  res.flushHeaders();
+  const send = (obj) => res.write("data: " + JSON.stringify(obj) + "\n\n");
+  try {
+    // 一次性 Agent 无多轮记忆，把历史对话压平进 userPrompt
+    let q = history.length > 1
+      ? "【历史对话】\n" + history.slice(0, -1).map(m => (m.role === "user" ? "用户：" : "助理：") + m.content).join("\n") + "\n\n【当前问题】\n" + history[history.length - 1].content
+      : history[0].content;
+    // 解析附件并追加到当前问题
+    const ids = Array.isArray(req.body?.attachments) ? req.body.attachments : [];
+    const attachments = [];
+    if (ids.length) {
+      const idx = path.join(AI_FILES_DIR, "index.json");
+      let all = {}; try { all = JSON.parse(fs.readFileSync(idx, "utf8")); } catch {}
+      for (const id of ids.slice(0, 6)) {
+        const meta = all[id]; if (!meta) continue;
+        let cached = extractCacheGet(id); if (!cached) { cached = await extractFileText(meta.path); extractCachePut(id, { ...cached, at: Date.now() }); }
+        attachments.push({ name: meta.name, text: cached.text || "" });
+      }
+    }
+    q += fmtAttachments(attachments);
+    const up = await fetch(gateway + "/api/v1/llm/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userPrompt: q, systemPrompt: BUDDY_SYSTEM, maxTurns: 4 }),
+    });
+    const j = await up.json().catch(() => null);
+    if (!j || j.success !== true || typeof j.text !== "string" || !j.text.trim()) {
+      send({ error: "WorkBuddy 应答失败：" + ((j && j.error) || "HTTP " + up.status) });
+      return res.end();
+    }
+    // 分段推送，前端呈现打字机效果
+    const text = j.text;
+    for (let i = 0; i < text.length; i += 60) {
+      send({ delta: text.slice(i, i + 60) });
+      await new Promise(r => setTimeout(r, 30));
+    }
+  } catch (e) {
+    send({ error: "调用失败：" + (e.message || "网络异常") });
+  }
+  res.end();
+});
 
 // ---------- WebSocket 实时同步 ----------
 const server = http.createServer(app);

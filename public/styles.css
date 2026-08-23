@@ -124,6 +124,19 @@ tr:hover td{background:#fbfbff}
 .buddy-body{padding:14px}
 .buddy-body textarea{width:100%;min-height:84px;border:1px solid var(--line);border-radius:10px;padding:10px;font-size:13px;resize:vertical;box-sizing:border-box;font-family:inherit}
 
+/* 助理Buddy 对话气泡 */
+.buddy-panel{display:flex;flex-direction:column;max-height:min(72vh,640px)}
+#buddyMsgs{flex:1 1 auto;min-height:200px;max-height:44vh;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;display:flex;flex-direction:column;gap:8px;padding:2px 2px 4px;margin-bottom:10px;scrollbar-width:thin}
+#buddyMsgs::-webkit-scrollbar{width:6px}
+#buddyMsgs::-webkit-scrollbar-thumb{background:#c9c9e6;border-radius:3px}
+.buddy-body textarea{max-height:120px}
+.bmsg{max-width:90%;padding:8px 11px;border-radius:12px;font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+.bmsg.user{align-self:flex-end;background:linear-gradient(135deg,#7c5cff,#5b8def);color:#fff;border-bottom-right-radius:4px}
+.bmsg.assistant{align-self:flex-start;background:#f1f2fb;color:#2b2b36;border:1px solid #e3e4f0;border-bottom-left-radius:4px}
+.bmsg.assistant.think{color:#8a8aa0;font-style:italic}
+.bmsg-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;padding-top:8px;border-top:1px dashed #d5d6ea}
+.bmsg-actions .btn{padding:3px 9px;font-size:12px}
+
 /* AI 协助按钮行 */
 .ai-assist-row{display:flex;align-items:center;gap:10px;margin-bottom:14px;padding:10px 12px;background:linear-gradient(90deg,rgba(124,92,255,.10),rgba(91,141,239,.04));border:1px dashed var(--brand);border-radius:10px}
 
@@ -192,7 +205,8 @@ tr:hover td{background:#fbfbff}
 .auth-role.ed{background:rgba(30,158,106,.14);color:var(--green)}
 .auth-role.ro{background:rgba(224,83,61,.14);color:var(--red)}
 .auth-logout{font-size:11px;padding:3px 8px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink2)}
-body.readonly .buddy-fab{display:none}
+/* 助理Buddy 对所有登录成员开放（含只读成员），AI 问答不属于编辑操作 */
+body.readonly .buddy-fab{display:flex}
 body.readonly #shareBtn{display:none}
 body.readonly .btn-danger{display:none!important}
 body.readonly a[download]{display:none!important}
@@ -375,3 +389,48 @@ textarea.drop-target{outline:2px dashed var(--brand);outline-offset:2px}
 .sv-linkbox:hover{border-color:var(--brand);color:var(--brand)}
 .butler-chip{font-size:11px}
 @media (max-width:760px){.sv-card.sv-hero{flex-direction:column;align-items:flex-start}}
+
+/* ---------- 方案 AI 改写台 & 版本历史（方案库 ↔ 想法库 打通） ---------- */
+.modal-card.modal-wide{width:min(960px,95vw)}
+.rw-quick{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 6px}
+.rw-chip{cursor:pointer;transition:all .12s;font-size:12px}
+.rw-chip:hover{border-color:var(--brand);color:var(--brand);background:#fff}
+.rw-stage{margin-top:10px}
+.rw-loading{display:flex;align-items:center;gap:6px;padding:18px 12px;color:var(--ink2);font-size:13.5px;background:var(--bg);border-radius:12px;border:1px dashed var(--line)}
+.rw-dot{width:7px;height:7px;border-radius:50%;background:var(--brand);opacity:.35;animation:rwBlink 1s infinite}
+.rw-dot:nth-child(2){animation-delay:.18s}
+.rw-dot:nth-child(3){animation-delay:.36s}
+@keyframes rwBlink{0%,100%{opacity:.25;transform:scale(.85)}50%{opacity:1;transform:scale(1.1)}}
+@media (prefers-reduced-motion:reduce){.rw-dot{animation:none}}
+.rw-compare{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
+@media (max-width:820px){.rw-compare{grid-template-columns:1fr}}
+.rw-pane{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff}
+.rw-pane-h{display:flex;align-items:center;gap:6px;padding:8px 12px;font-size:12.5px;font-weight:600;color:var(--ink2);background:var(--bg);border-bottom:1px solid var(--line)}
+.rw-pane-new{border-color:rgba(124,92,255,.45);box-shadow:0 4px 16px rgba(124,92,255,.10)}
+.rw-pane-new .rw-pane-h{color:var(--brand);background:linear-gradient(90deg,rgba(124,92,255,.10),rgba(124,92,255,.02))}
+.rw-pane-b{padding:10px 12px;font-size:12.5px;line-height:1.7;white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto;color:var(--ink)}
+.rw-vers{display:flex;flex-direction:column;gap:10px}
+.rw-ver{border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:#fff}
+.rw-ver:hover{border-color:var(--brand)}
+.rw-ver-cur{border-color:rgba(30,158,106,.5);background:linear-gradient(180deg,rgba(30,158,106,.05),#fff)}
+.rw-ver .rw-pane-b{border:1px solid var(--line);border-radius:8px;background:var(--bg);margin-top:8px;max-height:110px}
+
+/* ---------- AI 多模态附件（所有 AI 输入端口通用） ---------- */
+.att-zone{margin-top:8px}
+.att-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.att-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.att-chips:empty{margin-top:0}
+.att-chip{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border:1px solid var(--line);border-radius:9px;background:#fff;font-size:12px;max-width:100%;transition:all .12s}
+.att-chip:hover{border-color:var(--brand)}
+.att-chip.att-err{border-color:#f0c6bd;background:#fdf5f4}
+.att-name{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
+.att-badge{font-size:11px;padding:1px 7px;border-radius:99px;white-space:nowrap}
+.att-badge.green{background:rgba(30,158,106,.12);color:var(--green)}
+.att-badge.blue{background:rgba(91,141,239,.14);color:var(--brand2)}
+.att-badge.red{background:rgba(224,83,61,.12);color:var(--red)}
+.att-del{border:none;background:none;color:var(--ink2);font-size:14px;line-height:1;padding:0 2px;cursor:pointer}
+.att-del:hover{color:var(--red)}
+.att-drag{outline:2px dashed var(--brand);outline-offset:-6px;border-radius:12px}
+.att-chip-mini{display:inline-flex;align-items:center;gap:4px;margin-top:4px;padding:2px 8px;border-radius:99px;background:var(--chip);color:var(--ink2);font-size:11px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bmsg-atts{margin-top:4px;display:flex;flex-direction:column;align-items:flex-end;gap:3px}
+#buddyAttZone .att-bar .muted{color:var(--ink2)}

@@ -14,12 +14,13 @@ const MODULES = [
   { id: "collab", ic: "🧩", label: "协作与分工", group: "协作" },
   { id: "resources", ic: "🧰", label: "专家与工具", group: "协作" },
   { id: "aidesk", ic: "🤖", label: "AI 任务台", group: "智能" },
+  { id: "ideas", ic: "💡", label: "想法库", group: "智能" },
   { id: "docs", ic: "📚", label: "学习库", group: "智能" },
   { id: "activity", ic: "🕘", label: "动态", group: "智能" },
 ];
 
 const state = {
-  db: { members: [], plans: [], tasks: [], proposals: [], feedback: [], customers: [], experts: [], tools: [], aiTasks: [], docs: [], events: [], followups: [], reports: [], media: [], messages: [], badges: [] },
+  db: { members: [], plans: [], tasks: [], proposals: [], feedback: [], customers: [], experts: [], tools: [], aiTasks: [], docs: [], events: [], followups: [], reports: [], media: [], messages: [], badges: [], drafts: [] },
   user: "m_beau",
   query: "",
   route: "overview",
@@ -29,7 +30,7 @@ const state = {
   canEdit: ["editor", "admin"].includes((localStorage.getItem("qb_role") || "")),
   inbox: [], inboxUnread: 0,
 };
-const COLS = ["members", "plans", "tasks", "proposals", "feedback", "customers", "experts", "tools", "aiTasks", "docs", "events", "followups", "reports", "media", "messages", "badges", "chatRooms"];
+const COLS = ["members", "plans", "tasks", "proposals", "feedback", "customers", "experts", "tools", "aiTasks", "docs", "events", "followups", "reports", "media", "messages", "badges", "chatRooms", "drafts"];
 const TASK_CATS = ["产品规划", "技术开发", "市场招商", "门店运营", "内容生产", "培训考核", "合规风控", "客户服务"];
 let taskCatTab = "全部";
 window.setTaskCat = (c) => { taskCatTab = c; render(); };
@@ -146,13 +147,14 @@ window.chatDoInsertTask = (tid) => {
 };
 window.chatAIAssist = () => {
   const el = $("#chatInput"); if (!el) return;
-  // 直接调用 AI 生成，结果填入聊天框
   const id = "_chat_" + Date.now();
+  const ctxId = "chatAI_" + id;
   _aiCfgs[id] = { kind: "generic", targetField: "_chatDummy", hint: "让 AI 帮你生成一条专业消息内容。" };
   $("#aiModalTitle").textContent = "🤖 AI 协助写消息";
   $("#aiModalBody").innerHTML = `
     <div class="muted" style="margin-bottom:8px">描述你想发的消息内容，AI 将基于乔本·数果业务知识生成草稿。</div>
     <div class="field"><label>给 AI 的指令</label><textarea id="aiPrompt" placeholder="例如：写一条提醒团队本周重点的消息…" style="min-height:100px"></textarea></div>
+    ${attWidgetHTML(ctxId, { hint: "可上传参考截图/文档" })}
     <div class="row" style="justify-content:flex-end;margin-top:6px"><button class="btn" type="button" onclick="document.getElementById('aiModal').classList.add('hidden')">取消</button><button class="btn btn-primary" id="aiGo">🤖 生成并填入</button></div>`;
   $("#aiModal").classList.remove("hidden");
   const go = $("#aiGo");
@@ -160,7 +162,8 @@ window.chatAIAssist = () => {
     const prompt = $("#aiPrompt").value.trim(); if (!prompt) return toast("请填写指令");
     go.disabled = true; go.textContent = "生成中…";
     try {
-      const r = await api("POST", "/ai/generate", { kind: "generic", prompt });
+      const atts = attPayload(ctxId);
+      const r = await api("POST", "/ai/generate", { kind: "generic", prompt, attachments: atts.map(a => a.id) });
       el.value = r.result || "";
       $("#aiModal").classList.add("hidden");
       toast("AI 已生成消息草稿，可编辑后发送");
@@ -252,6 +255,8 @@ function itemLevelWriteAllowed(method, path, body) {
   const { col, id } = parseColId(path);
   // 聊天是基础协作能力：发消息 / 建群对所有登录成员开放
   if (col === "messages") return true;
+  // 想法库草稿是个人空间：全体登录成员可写（服务端 draftWrite 白名单同样放行）
+  if (col === "drafts") return true;
   if (col === "chatRooms") {
     if (method === "POST") return true; // 拉群
     const g = (state.db.chatRooms || []).find(x => x.id === id);
@@ -314,9 +319,11 @@ const _origRender = render;
 render = function() { destroyCharts(); _origRender(); };
 
 // ---------- 弹窗表单 ----------
-function openModal(title, bodyHTML) {
+function openModal(title, bodyHTML, opts = {}) {
   $("#modalTitle").textContent = title;
   $("#modalBody").innerHTML = bodyHTML;
+  const card = $("#modal .modal-card");
+  if (card) card.classList.toggle("modal-wide", !!opts.wide);
   $("#modal").classList.remove("hidden");
   applyReadonly();
 }
@@ -375,11 +382,13 @@ function setFormVal(name, val) {
 }
 window.openAIPrompt = async (id) => {
   const cfg = _aiCfgs[id]; if (!cfg) return;
+  const ctxId = "ai_" + id;
   $("#aiModalTitle").textContent = "🤖 AI 协助 · " + (cfg.label || "生成草稿");
   $("#aiModalBody").innerHTML = `
     <div class="muted" style="margin-bottom:8px">${esc(cfg.hint || "描述你的需求，AI 将基于乔本·数果业务知识生成草稿并填入表单。")}</div>
     ${cfg.titleField ? `<div class="field"><label>${esc(cfg.titleField)}</label><input id="aiTitle" placeholder="${esc(cfg.titlePH || "")}" /></div>` : ""}
     <div class="field"><label>给 AI 的指令</label><textarea id="aiPrompt" placeholder="${esc(cfg.promptPH || "例如：围绕肠道菌群基础知识，生成一门 20 分钟的代理商培训课程")}" style="min-height:110px"></textarea></div>
+    ${attWidgetHTML(ctxId, { hint: "可上传参考文档/图片（AI 将提取文字并作为上下文参考）" })}
     <div class="row" style="justify-content:flex-end;margin-top:6px"><button class="btn" type="button" onclick="document.getElementById('aiModal').classList.add('hidden')">取消</button><button class="btn btn-primary" id="aiGo">🤖 生成并填入</button></div>`;
   $("#aiModal").classList.remove("hidden");
   const go = $("#aiGo");
@@ -389,7 +398,8 @@ window.openAIPrompt = async (id) => {
     const title = cfg.titleField ? ($("#aiTitle").value.trim()) : "";
     go.disabled = true; go.textContent = "生成中… 🤖";
     try {
-      const r = await api("POST", "/ai/generate", { kind: cfg.kind, prompt, title, linkedType: cfg.linkedType || "" });
+      const atts = attPayload(ctxId);
+      const r = await api("POST", "/ai/generate", { kind: cfg.kind, prompt, title, linkedType: cfg.linkedType || "", attachments: atts.map(a => a.id) });
       if (cfg.titleField && r.title) setFormVal(cfg.titleField, r.title);
       setFormVal(cfg.targetField, r.result);
       if (cfg.kind === "doc") {
@@ -402,6 +412,75 @@ window.openAIPrompt = async (id) => {
     finally { go.disabled = false; go.textContent = "🤖 生成并填入"; }
   };
 };
+
+// ---------- AI 多模态输入附件（通用组件：上传 / 解析 / 芯片） ----------
+const _att = {}; // ctxId -> { id, name, size, kind, status, chars, text, error }[]
+let _attSeq = 0;
+function attWidgetHTML(ctxId, opts = {}) {
+  _att[ctxId] = [];
+  const acc = opts.accept || "image/*,.pdf,.doc,.docx,.rtf,.txt,.md,.csv,.json,.html,.xlsx,.pptx";
+  const hid = "attFile_" + ctxId + "_" + (_attSeq++);
+  return `<div class="att-zone" id="attZone_${ctxId}" data-ctx="${ctxId}">
+    <div class="att-bar">
+      <button class="btn btn-sm" type="button" onclick="attPick('${ctxId}','${hid}')">📎 添加图片/文档</button>
+      <span class="muted" style="font-size:12px">${esc(opts.hint || "支持图片 OCR、PDF/Word/Excel/PPT/文本解析，可拖拽或粘贴")}</span>
+    </div>
+    <div class="att-chips" id="attChips_${ctxId}"></div>
+    <input type="file" multiple accept="${acc}" id="${hid}" style="display:none" onchange="attFiles('${ctxId}', this.files); this.value=''">
+  </div>`;
+}
+window.attPick = (ctxId, hid) => { const el = $(`#${hid}`); if (el) el.click(); };
+window.attFiles = async (ctxId, files) => {
+  for (const f of files) { await attUpload(ctxId, f); }
+};
+async function attUpload(ctxId, file) {
+  if (!file) return;
+  const id = "att_" + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(2, 6);
+  const meta = { id, name: file.name, size: file.size, kind: "uploading", status: "上传中", chars: 0, text: "", error: "" };
+  const arr = _att[ctxId] || (_att[ctxId] = []);
+  arr.push(meta);
+  attRender(ctxId);
+  try {
+    const fd = new FormData();
+    fd.append("file", file);
+    const r = await fetch("/api/ai/upload", { method: "POST", headers: { Authorization: "Bearer " + (state.token || "") }, body: fd });
+    if (!r.ok) { const j = await r.json().catch(() => ({})); meta.error = j.error || "上传失败"; meta.status = "失败"; meta.kind = "error"; attRender(ctxId); return; }
+    const j = await r.json();
+    meta.id = j.id; meta.kind = j.kind; meta.status = "解析中"; attRender(ctxId);
+    const e = await fetch("/api/ai/extract", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + (state.token || "") }, body: JSON.stringify({ ids: [j.id] }) });
+    if (!e.ok) { meta.error = "解析失败"; meta.status = "失败"; meta.kind = "error"; attRender(ctxId); return; }
+    const [er] = await e.json();
+    if (er.error && !er.text) { meta.error = er.error || "未能提取文字"; meta.status = "失败"; meta.kind = "error"; }
+    else { meta.text = er.text || ""; meta.status = "就绪"; meta.chars = er.chars || 0; }
+    attRender(ctxId);
+  } catch (ex) { meta.error = (ex && ex.message) || "上传异常"; meta.status = "失败"; meta.kind = "error"; attRender(ctxId); }
+}
+function attRender(ctxId) {
+  const box = $(`#attChips_${ctxId}`); if (!box) return;
+  const arr = _att[ctxId] || [];
+  if (!arr.length) { box.innerHTML = ""; return; }
+  box.innerHTML = arr.map((a, i) => {
+    const icon = a.kind === "image" ? "🖼" : a.kind === "pdf" ? "📄" : a.kind === "doc" ? "📝" : a.kind === "sheet" ? "📊" : a.kind === "slides" ? "📽" : "📎";
+    const badge = a.status === "就绪" ? `<span class="att-badge green">${a.chars}字</span>` : a.status === "解析中" ? `<span class="att-badge blue">解析中</span>` : a.status === "上传中" ? `<span class="att-badge blue">上传中</span>` : `<span class="att-badge red">${esc(a.error || "失败")}</span>`;
+    return `<div class="att-chip ${a.status === '失败' ? 'att-err' : ''}">${icon} <span class="att-name">${esc(a.name)}</span>${badge}<button class="att-del" onclick="attRemove('${ctxId}', ${i})" title="移除">×</button></div>`;
+  }).join("");
+}
+window.attRemove = (ctxId, idx) => { const arr = _att[ctxId]; if (!arr) return; arr.splice(idx, 1); attRender(ctxId); };
+function attPayload(ctxId) { return (_att[ctxId] || []).filter(a => a.status === "就绪" && a.id).map(a => ({ id: a.id, name: a.name })); }
+function attEnableDrop(ctxId, zoneSel) {
+  const el = $(zoneSel); if (!el) return;
+  el.addEventListener("dragover", e => { e.preventDefault(); el.classList.add("att-drag"); });
+  el.addEventListener("dragleave", () => { el.classList.remove("att-drag"); });
+  el.addEventListener("drop", e => { e.preventDefault(); el.classList.remove("att-drag"); if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) { attFiles(ctxId, e.dataTransfer.files); } });
+}
+function attEnablePaste(ctxId, taId) {
+  const el = $(taId); if (!el) return;
+  el.addEventListener("paste", e => {
+    const items = e.clipboardData && e.clipboardData.items ? Array.from(e.clipboardData.items) : [];
+    const files = items.filter(it => it.kind === "file").map(it => it.getAsFile()).filter(Boolean);
+    if (files.length) attFiles(ctxId, files);
+  });
+}
 
 // ---------- 导航 ----------
 function renderNav() {
@@ -437,7 +516,7 @@ if (location.hash) state.route = normalizeRoute(location.hash.slice(1));
 function render() {
   const r = state.route;
   const main = $("#main");
-  const fns = { overview: renderOverview, planexec: renderPlanExec, proposals: renderProposals, feedback: renderFeedback, customers: renderCustomers, media: renderMedia, team: renderTeam, collab: renderCollab, resources: renderResources, aidesk: renderAIDesk, docs: renderDocs, activity: renderActivity };
+  const fns = { overview: renderOverview, planexec: renderPlanExec, proposals: renderProposals, feedback: renderFeedback, customers: renderCustomers, media: renderMedia, team: renderTeam, collab: renderCollab, resources: renderResources, aidesk: renderAIDesk, ideas: renderIdeas, docs: renderDocs, activity: renderActivity };
   try {
     (fns[r] || renderOverview)(main);
   } catch (e) {
@@ -661,8 +740,8 @@ function renderPlans(main) {
       return `<div class="card"><div class="row" style="justify-content:space-between"><h3>${esc(p.title)}</h3><span class="chip ${statusChip(p.status)}">${p.status}</span></div>
       <div class="muted">${esc(p.desc)}</div>
       <div class="bar"><i style="width:${p.progress}%"></i></div>
-      <div class="meta">负责人 ${mName(p.ownerId)} · ${p.start}→${p.end} · 任务 ${done}/${ts.length} · 进度 ${p.progress}%</div>
-      <div class="row" style="margin-top:10px"><button class="btn btn-sm" onclick="openPlanForm('${p.id}')">编辑</button>
+      <div class="meta">${p.ownerId ? "负责人 " + mName(p.ownerId) : '<span class="chip orange">待认领</span>'} · ${p.start}→${p.end} · 任务 ${done}/${ts.length} · 进度 ${p.progress}%</div>
+      <div class="row" style="margin-top:10px">${!p.ownerId ? `<button class="btn btn-sm btn-primary" onclick="claimPlan('${p.id}')">🙋 认领该计划</button>` : ""}<button class="btn btn-sm" onclick="openPlanForm('${p.id}')">编辑</button>
       <button class="btn btn-sm" onclick="goto('planexec')">看任务</button>
       <button class="btn btn-sm btn-danger" onclick="del('plans','${p.id}')">删除</button></div></div>`;
     }).join("") || "<div class='empty'>无匹配计划</div>"}</div>`;
@@ -671,7 +750,7 @@ window.openPlanForm = (id) => {
   const p = id ? state.db.plans.find(x => x.id === id) : { ownerId: state.user, collaborators: [], status: "进行中", progress: 0 };
   openModal(id ? "编辑计划" : "新建计划", formHTML([
     { key: "title", label: "计划标题" }, { key: "desc", label: "描述", type: "textarea" },
-    { key: "status", label: "状态", type: "select", options: [{ v: "进行中", l: "进行中" }, { v: "已完成", l: "已完成" }, { v: "暂停", l: "暂停" }] },
+    { key: "status", label: "状态", type: "select", options: [{ v: "待启动", l: "待启动" }, { v: "进行中", l: "进行中" }, { v: "已完成", l: "已完成" }, { v: "暂停", l: "暂停" }] },
     { key: "ownerId", label: "负责人", type: "select", options: state.db.members.map(m => ({ v: m.id, l: m.name })) },
     { key: "start", label: "开始日期", type: "date" }, { key: "end", label: "结束日期", type: "date" },
     { key: "progress", label: "进度(%)", type: "number" },
@@ -692,17 +771,23 @@ window.openPlanForm = (id) => {
 
 function renderProposals(main) {
   const list = state.db.proposals.filter(p => matches(p, state.query));
-  main.innerHTML = `<div class="page-head"><div><h2>方案（AI 写 / 改 / 版本）</h2><div class="sub">可一键发起 AI 撰写，关联客户与任务</div></div>
+  main.innerHTML = `<div class="page-head"><div><h2>方案（AI 写 / 改 / 版本）</h2><div class="sub">AI 起草、AI 改写、版本历史自动归档；改写结果可先入想法库私有打磨，确认后升版定稿</div></div>
     <div class="row"><button class="btn btn-primary" onclick="openPropForm()">＋ 新建方案</button>
     <button class="btn" onclick="aiWriteProposal()">🤖 AI 生成方案</button></div></div>
-    <div class="grid cols-2">${list.map(p => `
+    <div class="grid cols-2">${list.map(p => {
+      const nHist = (p.versions || []).length;
+      return `
       <div class="card"><div class="row" style="justify-content:space-between"><h3>${esc(p.title)}</h3><span class="chip ${statusChip(p.status)}">${p.status}</span></div>
       <div class="doc-body" style="max-height:160px;overflow:auto">${esc(p.content)}</div>
       <div class="meta">v${p.version} · ${mName(p.createdBy)} · ${timeAgo(p.updatedAt || Date.now())}
       ${p.customerId ? `· 客户 <span class="linked" onclick="goto('customers')">${cName(p.customerId)}</span>` : ""}
-      ${p.relatedTaskId ? `· 任务 <span class="linked" onclick="goto('planexec')">${tName(p.relatedTaskId)}</span>` : ""}</div>
-      <div class="row" style="margin-top:10px"><button class="btn btn-sm" onclick="openPropForm('${p.id}')">编辑/改版</button>
-      <button class="btn btn-sm btn-danger" onclick="del('proposals','${p.id}')">删除</button></div></div>`).join("") || "<div class='empty'>暂无方案</div>"}</div>`;
+      ${p.relatedTaskId ? `· 任务 <span class="linked" onclick="goto('planexec')">${tName(p.relatedTaskId)}</span>` : ""}
+      ${nHist ? `· <span class="linked" onclick="openVersionModal('${p.id}')">🕘 ${nHist + 1} 个版本</span>` : ""}</div>
+      <div class="row" style="margin-top:10px;flex-wrap:wrap;gap:6px"><button class="btn btn-sm" onclick="openPropForm('${p.id}')">编辑/改版</button>
+      <button class="btn btn-sm btn-primary" onclick="openRewriteModal('${p.id}')">✨ AI 改写</button>
+      ${nHist ? `<button class="btn btn-sm" onclick="openVersionModal('${p.id}')">🕘 版本历史</button>` : ""}
+      <button class="btn btn-sm btn-danger" onclick="del('proposals','${p.id}')">删除</button></div></div>`;
+    }).join("") || "<div class='empty'>暂无方案</div>"}</div>`;
 }
 // 把关联任务格式化为可拉入修改台的文本
 function formatTaskText(t) {
@@ -787,12 +872,159 @@ window.aiWriteProposal = () => {
     { key: "prompt", label: "给 AI 的指令", type: "textarea", placeholder: "描述你要的方案要点、受众、结构…" },
     { key: "customerId", label: "关联客户(可选)", type: "select", options: [{ v: "", l: "无" }, ...state.db.customers.map(c => ({ v: c.id, l: c.name + (c.type ? `（${c.type}端）` : "") }))] },
     { key: "relatedTaskId", label: "关联任务(可选)", type: "select", options: [{ v: "", l: "无" }, ...state.db.tasks.map(t => ({ v: t.id, l: t.title }))] },
-  ], {}));
+  ], {}) + attWidgetHTML("aiwp", { hint: "上传参考资料（图片/文档），执行时自动解析给 AI" }));
   $("#formSubmit").onclick = async () => {
     const fd = readForm(); if (!fd.title || !fd.prompt) return toast("标题和指令必填");
-    const a = await api("POST", "/aiTasks", { title: "撰写方案：" + fd.title, prompt: fd.prompt, linkedType: "proposal", linkedId: "", status: "待处理" });
+    const atts = attPayload("aiwp");
+    const a = await api("POST", "/aiTasks", { title: "撰写方案：" + fd.title, prompt: fd.prompt, linkedType: "proposal", linkedId: "", status: "待处理", ...(atts.length ? { attachmentIds: atts.map(x => x.id) } : {}) });
     closeModal(); toast("已生成 AI 任务，去任务台交给斜杠喵"); goto("aidesk");
   };
+};
+
+// ---------- 方案 AI 改写台 + 版本历史（方案库 ↔ 想法库 双向打通） ----------
+// 改写结果暂存（弹窗内存活，不落库）
+const _rw = { pid: null, result: "", baseVersion: 1, engine: "" };
+window.openRewriteModal = (id) => {
+  const p = state.db.proposals.find(x => x.id === id); if (!p) return;
+  if (!state.canEdit) return toast("AI 改写需要协作者/管理员权限");
+  _rw.pid = id; _rw.result = ""; _rw.engine = "";
+  const verOpts = [{ v: p.version, l: `当前 v${p.version}` },
+    ...(p.versions || []).slice().sort((a, b) => b.v - a.v).map(v => ({ v: v.v, l: `历史 v${v.v}` }))];
+  const ctxId = "rw";
+  openModal("✨ AI 改写 · " + p.title, `
+    <div class="field"><label>基于版本</label>
+      <select id="rwBase">${verOpts.map(o => `<option value="${o.v}">${o.l}</option>`).join("")}</select></div>
+    <div class="field"><label>改写指令</label>
+      <textarea id="rwInstr" placeholder="如：语气更专业、压缩到一半篇幅、补充预算与排期、面向 C 端客户重写价值部分…"></textarea></div>
+    <div class="rw-quick">
+      ${["更精简", "更正式专业", "补充KPI", "面向客户重写", "增加风险合规"].map(q =>
+        `<button class="chip rw-chip" onclick="rwQuick(this)">${q}</button>`).join("")}
+    </div>
+    ${attWidgetHTML(ctxId, { hint: "可上传参考文档/图片，AI 将提取内容并纳入改写参考" })}
+    <div class="rw-stage" id="rwStage"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:10px;gap:8px">
+      <button class="btn" onclick="closeModal()">关闭</button>
+      <button class="btn btn-primary" id="rwGo">🚀 开始改写</button>
+    </div>`, { wide: true });
+  $("#rwGo").onclick = rwRun;
+};
+window.rwQuick = (el) => {
+  const ta = $("#rwInstr"); if (!ta) return;
+  const t = el.textContent.trim();
+  ta.value = ta.value ? ta.value.replace(/[，,]?\s*$/, "") + "，" + t : t;
+  ta.focus();
+};
+async function rwRun() {
+  const p = state.db.proposals.find(x => x.id === _rw.pid); if (!p) return;
+  const instr = ($("#rwInstr").value || "").trim();
+  const baseVersion = Number($("#rwBase").value) || p.version;
+  if (!instr) return toast("请填写改写指令");
+  const stage = $("#rwStage"), go = $("#rwGo");
+  go.disabled = true; go.innerHTML = "⏳ AI 改写中…";
+  stage.innerHTML = `<div class="rw-loading"><span class="rw-dot"></span><span class="rw-dot"></span><span class="rw-dot"></span> 斜杠喵正在基于 v${baseVersion} 改写方案…</div>`;
+  try {
+    const atts = attPayload("rw");
+    const r = await api("POST", `/proposals/${_rw.pid}/rewrite`, { instruction: instr, baseVersion, attachments: atts.map(a => a.id) });
+    _rw.result = r.result; _rw.baseVersion = r.baseVersion; _rw.engine = r.engine || "";
+    const vs = (p.versions || []).find(v => v.v === r.baseVersion);
+    const baseContent = vs ? vs.content : p.content;
+    stage.innerHTML = `
+      <div class="rw-compare">
+        <div class="rw-pane"><div class="rw-pane-h">📄 原文 v${r.baseVersion}</div>
+          <div class="rw-pane-b">${esc((baseContent || "").slice(0, 1200))}${(baseContent || "").length > 1200 ? "…" : ""}</div></div>
+        <div class="rw-pane rw-pane-new"><div class="rw-pane-h">✨ AI 改写稿${r.engine === "workbuddy" ? "" : "（模板兜底）"}</div>
+          <div class="rw-pane-b">${esc(r.result)}</div></div>
+      </div>
+      <div class="row" style="margin-top:12px;flex-wrap:wrap;gap:8px">
+        <button class="btn" id="rwRetry">🔁 换个指令重写</button>
+        <button class="btn" id="rwCopy">📋 复制全文</button>
+        <span style="flex:1"></span>
+        <button class="btn btn-primary" id="rwDraft">📝 存入想法库</button>
+        <button class="btn btn-primary" id="rwApply">⬆️ 升版定稿</button>
+      </div>`;
+    $("#rwRetry").onclick = () => { stage.innerHTML = ""; go.disabled = false; go.innerHTML = "🚀 开始改写"; };
+    $("#rwCopy").onclick = () => { navigator.clipboard && navigator.clipboard.writeText(_rw.result); toast("已复制改写全文"); };
+    $("#rwDraft").onclick = rwToDraft;
+    $("#rwApply").onclick = rwApply;
+  } catch (e) {
+    stage.innerHTML = `<div class="muted">改写失败：${esc(e.message || "")}</div>`;
+  } finally {
+    go.disabled = false; go.innerHTML = "🚀 开始改写";
+  }
+}
+// 改写结果 → 想法库（私有打磨，写完再发平台）
+async function rwToDraft() {
+  const p = state.db.proposals.find(x => x.id === _rw.pid); if (!p || !_rw.result) return;
+  try {
+    await api("POST", "/drafts", {
+      title: p.title + " · 改写候选", content: _rw.result,
+      ownerId: state.user, status: "草稿", source: "rewrite",
+      proposalId: p.id, baseVersion: _rw.baseVersion,
+      createdAt: Date.now(), updatedAt: Date.now(),
+    });
+    toast("已存入想法库（仅自己可见），打磨好可再「转为方案」");
+  } catch (e) { toast("存想法库失败：" + (e.message || "")); }
+}
+// 改写结果 → 升版定稿（旧版本自动归档）
+async function rwApply() {
+  const p = state.db.proposals.find(x => x.id === _rw.pid); if (!p || !_rw.result) return;
+  try {
+    await api("PUT", `/proposals/${_rw.pid}`, {
+      content: _rw.result, version: (Number(p.version) || 1) + 1,
+      _versionNote: "AI 改写", _actor: state.user,
+    });
+    closeModal(); toast(`已升版为 v${(Number(p.version) || 1) + 1}，旧版本已归档`);
+    render();
+  } catch (e) { toast("升版失败：" + (e.message || "")); }
+}
+// 版本历史：查看 / 恢复 / 存入想法库
+window.openVersionModal = (id) => {
+  const p = state.db.proposals.find(x => x.id === id); if (!p) return;
+  const hist = (p.versions || []).slice().sort((a, b) => b.v - a.v);
+  const rows = [
+    { v: Number(p.version) || 1, content: p.content, by: p.createdBy, updatedAt: p.updatedAt, note: "当前版本", cur: true },
+    ...hist.map(v => ({ ...v, cur: false })),
+  ].map(r => `
+    <div class="rw-ver ${r.cur ? "rw-ver-cur" : ""}">
+      <div class="row" style="justify-content:space-between">
+        <b>v${r.v}${r.cur ? " · 当前" : ""}${r.note && !r.cur ? " · " + esc(r.note) : ""}</b>
+        <span class="muted" style="font-size:12px">${mName(r.by)} · ${timeAgo(r.updatedAt || Date.now())}</span>
+      </div>
+      <div class="rw-pane-b" style="max-height:110px;overflow:auto">${esc((r.content || "").slice(0, 600))}${(r.content || "").length > 600 ? "…" : ""}</div>
+      <div class="row" style="margin-top:6px;gap:8px">
+        ${r.cur ? "" : `<button class="btn btn-sm" onclick="propRestoreVer('${p.id}',${r.v})">↩️ 恢复此版本</button>`}
+        <button class="btn btn-sm" onclick="propVerToDraft('${p.id}',${r.v})">📄 存入想法库</button>
+      </div>
+    </div>`).join("");
+  openModal("🕘 版本历史 · " + p.title, `<div class="rw-vers">${rows || "<div class='empty'>暂无历史版本</div>"}</div>
+    <div class="row" style="justify-content:flex-end;margin-top:10px"><button class="btn" onclick="closeModal()">关闭</button></div>`, { wide: true });
+};
+window.propRestoreVer = async (pid, v) => {
+  const p = state.db.proposals.find(x => x.id === pid); if (!p) return;
+  if (!state.canEdit) return toast("恢复版本需要协作者/管理员权限");
+  const ver = (p.versions || []).find(x => x.v === v); if (!ver) return;
+  if (!confirm(`恢复到 v${v}？当前内容会归档为新历史版本，版本号升为 v${(Number(p.version) || 1) + 1}`)) return;
+  try {
+    await api("PUT", `/proposals/${pid}`, {
+      content: ver.content, version: (Number(p.version) || 1) + 1,
+      _versionNote: "恢复自 v" + v, _actor: state.user,
+    });
+    closeModal(); toast(`已恢复 v${v} 的内容（当前为 v${(Number(p.version) || 1) + 1}）`);
+    render();
+  } catch (e) { toast("恢复失败：" + (e.message || "")); }
+};
+window.propVerToDraft = async (pid, v) => {
+  const p = state.db.proposals.find(x => x.id === pid); if (!p) return;
+  const ver = v === (Number(p.version) || 1) ? { content: p.content } : (p.versions || []).find(x => x.v === v);
+  if (!ver) return;
+  try {
+    await api("POST", "/drafts", {
+      title: p.title + " · v" + v, content: ver.content || "",
+      ownerId: state.user, status: "草稿", source: "proposal", proposalId: pid, baseVersion: v,
+      createdAt: Date.now(), updatedAt: Date.now(),
+    });
+    toast("已存入想法库（仅自己可见）");
+  } catch (e) { toast("存想法库失败：" + (e.message || "")); }
 };
 
 // ---------- 媒体库 ----------
@@ -1299,6 +1531,10 @@ window.openTaskDetail = (id) => {
 window.claimTask = async (id) => {
   await api("PUT", `/tasks/${id}`, { ownerId: state.user });
   toast("已领取任务");
+};
+window.claimPlan = async (id) => {
+  await api("PUT", `/plans/${id}`, { ownerId: state.user, status: "进行中" });
+  toast("已认领计划，状态已置为进行中");
 };
 window.openTransferModal = (id) => {
   const t = state.db.tasks.find(x => x.id === id); if (!t) return;
@@ -2016,8 +2252,8 @@ window.openAITaskForm = () => {
     { key: "prompt", label: "任务指令", type: "textarea", placeholder: "把要 AI 做的事写清楚，会作为交给斜杠喵的 prompt" },
     { key: "linkedType", label: "关联类型(可选)", type: "select", options: [{ v: "", l: "无" }, { v: "proposal", l: "方案" }, { v: "task", l: "任务" }, { v: "customer", l: "客户" }] },
     { key: "linkedId", label: "关联ID(可选)", placeholder: "对应条目的 id" },
-  ], {}));
-  $("#formSubmit").onclick = async () => { const fd = readForm(); if (!fd.title || !fd.prompt) return toast("标题和指令必填"); await api("POST", "/aiTasks", { ...fd, status: "待处理" }); closeModal(); toast("已发起"); };
+  ], {}) + attWidgetHTML("aitask", { hint: "上传参考资料（图片/文档），执行时自动解析给 AI" }));
+  $("#formSubmit").onclick = async () => { const fd = readForm(); if (!fd.title || !fd.prompt) return toast("标题和指令必填"); const atts = attPayload("aitask"); if (atts.length) fd.attachmentIds = atts.map(a => a.id); await api("POST", "/aiTasks", { ...fd, status: "待处理" }); closeModal(); toast("已发起" + (atts.length ? `（含 ${atts.length} 个附件）` : "")); };
 };
 window.runAITask = async (id) => {
   toast("🤖 正在自动执行 AI 任务…");
@@ -2121,6 +2357,104 @@ function learnStats() {
   return { totalMin, taken, avg: taken ? Math.round(scoreSum / taken) : 0, rate: taken ? Math.round(passed / taken * 100) : 0, perMember };
 }
 window.setDocCat = (c) => { docCat = c; render(); };
+// ---------- 想法库：个人草稿与未完成计划（写完再发到平台） ----------
+function renderIdeas(main) {
+  const mine = state.db.drafts.filter(d => d.ownerId === state.user && matches(d, state.query));
+  const published = mine.filter(d => d.status === "已发布");
+  const drafting = mine.filter(d => d.status !== "已发布");
+  const myPlans = state.db.plans.filter(p => p.ownerId === state.user && p.status !== "已完成" && matches(p, state.query));
+  const stat = `<div class="grid cols-4" style="margin-bottom:14px">
+    ${kpi("我的草稿", drafting.length, "📝")} ${kpi("已发布", published.length, "✅")} ${kpi("未完成计划", myPlans.length, "🛰️")} ${kpi("累计想法", mine.length, "💡")}
+  </div>`;
+  const draftCards = drafting.map(d => {
+    const src = d.source === "buddy" ? "🤖 来自 Buddy" : d.source === "rewrite" ? "✨ 方案改写候选" : d.source === "proposal" ? "📄 来自方案版本" : "✍️ 手动创建";
+    return `<div class="card"><div class="row" style="justify-content:space-between"><h3>${esc(d.title)}</h3><span class="chip">${src}</span></div>
+      <div class="doc-body" style="max-height:130px;overflow:auto">${esc(d.content || "")}</div>
+      <div class="meta">${timeAgo(d.updatedAt || d._created || Date.now())}${d.docId ? " · 已发学习库" : ""}${d.planId ? " · 已转计划" : ""}${d.proposalId ? " · 已转方案" : ""}</div>
+      <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px">
+        <button class="btn btn-sm" onclick="openIdeaForm('${d.id}')">✏️ 编辑</button>
+        <button class="btn btn-sm" onclick="ideaPublishDoc('${d.id}')">📄 发到学习库</button>
+        <button class="btn btn-sm" onclick="ideaToPlan('${d.id}')">🛰️ 转为计划</button>
+        <button class="btn btn-sm" onclick="ideaToProposal('${d.id}')">📋 转为方案</button>
+        <button class="btn btn-sm btn-danger" onclick="del('drafts','${d.id}')">删</button>
+      </div></div>`;
+  }).join("") || "<div class='empty'>还没有草稿——点右上角「＋ 记个想法」，或让 Buddy 生成后点「📝 存草稿」。</div>";
+  const publishedCards = published.map(d => `<div class="card"><div class="row" style="justify-content:space-between"><h3>${esc(d.title)}</h3><span class="chip green">已发布</span></div>
+      <div class="doc-body" style="max-height:90px;overflow:auto">${esc(d.content || "")}</div>
+      <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px">
+        ${d.docId ? `<button class="btn btn-sm" onclick="goto('docs')">📚 查看文档</button>` : ""}
+        ${d.planId ? `<button class="btn btn-sm" onclick="goto('planexec')">🛰️ 查看计划</button>` : ""}
+        ${d.proposalId ? `<button class="btn btn-sm" onclick="goto('proposals')">📋 查看方案</button>` : ""}
+        <button class="btn btn-sm" onclick="openIdeaForm('${d.id}')">✏️ 编辑</button>
+        <button class="btn btn-sm btn-danger" onclick="del('drafts','${d.id}')">删</button>
+      </div></div>`).join("") || "<div class='muted'>暂无已发布内容</div>";
+  const planList = myPlans.map(p => {
+    const ts = state.db.tasks.filter(t => t.planId === p.id);
+    const done = ts.filter(t => t.status === "done").length;
+    return `<div class="row" style="justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line)">
+      <span><b>${esc(p.title)}</b> <span class="chip">${p.status}</span></span>
+      <span class="muted">${p.start || "—"} → ${p.end || "—"} · 任务 ${done}/${ts.length} · ${p.progress || 0}% <button class="btn btn-sm" style="margin-left:8px" onclick="goto('planexec')">去推进</button></span></div>`;
+  }).join("") || "<div class='muted'>没有进行中的计划——可在计划库认领，或把草稿「转为计划」。</div>";
+  main.innerHTML = `<div class="page-head"><div><h2>想法库</h2><div class="sub">你的私人草稿与灵感空间：先存想法、攒半成品（含方案改写候选），写完了再一键发到学习库、计划库或方案库（仅自己可见）</div></div>
+    <button class="btn btn-primary" onclick="openIdeaForm()">＋ 记个想法</button></div>
+    ${stat}
+    <div class="card" style="margin-bottom:16px"><h3>📝 我的草稿（${drafting.length}）</h3><div class="grid cols-2">${draftCards}</div></div>
+    <div class="card" style="margin-bottom:16px"><h3>✅ 已发布（${published.length}）</h3><div class="grid cols-2">${publishedCards}</div></div>
+    <div class="card"><h3>🛰️ 我的未完成计划（${myPlans.length}）</h3>${planList}</div>`;
+}
+window.openIdeaForm = (id) => {
+  const d = id ? state.db.drafts.find(x => x.id === id) : {};
+  openModal(id ? "编辑想法/草稿" : "记个想法", formHTML([
+    { key: "title", label: "标题", placeholder: "一句话概括这个想法" },
+    { key: "content", label: "内容", type: "textarea", placeholder: "想法、草稿、半成品方案……随时存，写完再发到平台" },
+  ], d));
+  $("#formSubmit").onclick = async () => {
+    const fd = readForm(); if (!fd.title) return toast("请填标题");
+    if (id) await api("PUT", `/drafts/${id}`, { ...fd, updatedAt: Date.now() });
+    else await api("POST", "/drafts", { ...fd, ownerId: state.user, status: "草稿", source: "manual", createdAt: Date.now(), updatedAt: Date.now() });
+    closeModal(); toast("已存入想法库");
+  };
+};
+window.ideaPublishDoc = async (id) => {
+  const d = state.db.drafts.find(x => x.id === id); if (!d) return;
+  if (!state.canEdit) return toast("发布需要协作者/管理员权限，可先把草稿转给负责人");
+  try {
+    const doc = await api("POST", "/docs", {
+      title: d.title, category: "AI生成", type: "doc", duration: 0,
+      body: d.content || "", author: state.user, updatedAt: Date.now(), progress: {},
+    });
+    await api("PUT", `/drafts/${id}`, { status: "已发布", docId: doc.id, updatedAt: Date.now() });
+    toast("已发布到学习库");
+  } catch (e) { toast("发布失败：" + (e.message || "")); }
+};
+window.ideaToPlan = async (id) => {
+  const d = state.db.drafts.find(x => x.id === id); if (!d) return;
+  if (!state.canEdit) return toast("转计划需要协作者/管理员权限，可先把草稿转给负责人");
+  try {
+    const p = await api("POST", "/plans", {
+      title: d.title, desc: d.content || "", status: "进行中",
+      ownerId: state.user, start: new Date().toISOString().slice(0, 10), end: "",
+      progress: 0, collaborators: [],
+    });
+    await api("PUT", `/drafts/${id}`, { status: "已发布", planId: p.id, updatedAt: Date.now() });
+    toast("已转为计划，可在计划与执行进度里推进");
+  } catch (e) { toast("转计划失败：" + (e.message || "")); }
+};
+// 草稿 → 方案库（想法库 ↔ 方案库 打通：AI 改写候选/方案版本暂存打磨后回写）
+window.ideaToProposal = async (id) => {
+  const d = state.db.drafts.find(x => x.id === id); if (!d) return;
+  if (!state.canEdit) return toast("转方案需要协作者/管理员权限，可先把草稿转给负责人");
+  try {
+    const pr = await api("POST", "/proposals", {
+      title: d.title.replace(/\s*[··]\s*(改写候选|v\d+)$/, ""), content: d.content || "",
+      status: "草稿", version: 1, createdBy: state.user,
+      source: "draft", draftId: d.id,
+    });
+    await api("PUT", `/drafts/${id}`, { status: "已发布", proposalId: pr.id, updatedAt: Date.now() });
+    toast("已转为方案（v1 草稿），可到「方案」继续改写升版");
+    render();
+  } catch (e) { toast("转方案失败：" + (e.message || "")); }
+};
 function renderDocs(main) {
   const all = state.db.docs.filter(d => matches(d, state.query));
   const list = docCat === "全部" ? all : all.filter(d => d.category === docCat);
@@ -2254,13 +2588,14 @@ window.chatDoInsertTask = (tid) => {
 };
 window.chatAIAssist = () => {
   const el = $("#chatInput"); if (!el) return;
-  // 直接调用 AI 生成，结果填入聊天框
   const id = "_chat_" + Date.now();
+  const ctxId = "chatAI_" + id;
   _aiCfgs[id] = { kind: "generic", targetField: "_chatDummy", hint: "让 AI 帮你生成一条专业消息内容。" };
   $("#aiModalTitle").textContent = "🤖 AI 协助写消息";
   $("#aiModalBody").innerHTML = `
     <div class="muted" style="margin-bottom:8px">描述你想发的消息内容，AI 将基于乔本·数果业务知识生成草稿。</div>
     <div class="field"><label>给 AI 的指令</label><textarea id="aiPrompt" placeholder="例如：写一条提醒团队本周重点的消息…" style="min-height:100px"></textarea></div>
+    ${attWidgetHTML(ctxId, { hint: "可上传参考截图/文档" })}
     <div class="row" style="justify-content:flex-end;margin-top:6px"><button class="btn" type="button" onclick="document.getElementById('aiModal').classList.add('hidden')">取消</button><button class="btn btn-primary" id="aiGo">🤖 生成并填入</button></div>`;
   $("#aiModal").classList.remove("hidden");
   const go = $("#aiGo");
@@ -2268,7 +2603,8 @@ window.chatAIAssist = () => {
     const prompt = $("#aiPrompt").value.trim(); if (!prompt) return toast("请填写指令");
     go.disabled = true; go.textContent = "生成中…";
     try {
-      const r = await api("POST", "/ai/generate", { kind: "generic", prompt });
+      const atts = attPayload(ctxId);
+      const r = await api("POST", "/ai/generate", { kind: "generic", prompt, attachments: atts.map(a => a.id) });
       el.value = r.result || "";
       $("#aiModal").classList.add("hidden");
       toast("AI 已生成消息草稿，可编辑后发送");
@@ -2454,7 +2790,7 @@ function applyReadonly() {
     banner.classList.toggle("hidden", state.canEdit || dismissed);
   }
   if (state.canEdit) return;
-  const RE = /(openPropForm|openMediaForm|openFeedbackForm|openCustomerForm|openFollowForm|openReportForm|openMemberForm|openExpertForm|openToolForm|openAITaskForm|openDocForm|openTransferModal|claimTask|del\(|openForwardModal|openPushModal|saveAsTask|openPushCenter|openInvite)/;
+  const RE = /(openPropForm|openMediaForm|openFeedbackForm|openCustomerForm|openFollowForm|openReportForm|openMemberForm|openExpertForm|openToolForm|openAITaskForm|openDocForm|openTransferModal|claimTask|del\(|openForwardModal|openPushModal|saveAsTask|openPushCenter|openInvite|openRewriteModal|propRestoreVer|ideaToProposal)/;
   // 注意：聊天(sendChat/switchChatRoom/openGroupForm/chatInsertTask/chatAIAssist)与 openWechatPush 对所有成员开放，不隐藏
   document.querySelectorAll("button[onclick],a[onclick]").forEach(el => {
     if (RE.test(el.getAttribute("onclick") || "")) el.style.display = "none";
@@ -2490,21 +2826,196 @@ window.toggleSidebar = (force) => {
 const _navEl = document.getElementById("nav");
 if (_navEl) _navEl.addEventListener("click", (e) => { if (e.target.closest(".nav-item")) document.body.classList.remove("nav-open"); });
 
-// ---------- 助理Buddy 悬浮助手 ----------
-window.buddyQuick = (text) => { const el = $("#buddyInput"); if (el) { el.value = text; el.focus(); } };
-window.buddyAssign = async () => {
-  const el = $("#buddyInput"); const prompt = (el && el.value || "").trim();
-  if (!prompt) return toast("请先描述要指派的任务");
-  const a = await api("POST", "/aiTasks", { title: "Buddy：" + prompt.slice(0, 24), prompt, linkedType: "", linkedId: "", status: "待处理" });
-  $("#buddyPanel").classList.add("hidden");
+// ---------- 助理Buddy：全能 AI 对话入口（真实大模型，流式回复） ----------
+let buddyHistory = []; // [{role:'user'|'assistant', content, seed?, docId?, planId?}]
+let buddyAbort = null; // 生成中的 AbortController；非空 = 生成中（发送键变停止键）
+let buddyLoaded = false; // 是否已从服务端加载持久记忆
+async function buddySync() {
+  try { await api("PUT", "/buddy/history", { messages: buddyHistory.filter(m => !m.seed) }); } catch { /* 静默失败，不打断对话 */ }
+}
+async function buddyLoad() {
+  if (buddyLoaded) return;
+  buddyLoaded = true;
+  try {
+    const h = await api("GET", "/buddy/history");
+    if (Array.isArray(h) && h.length) buddyHistory = h;
+  } catch { /* 未登录等情况忽略 */ }
+}
+window.buddyClear = async () => {
+  if (!confirm("确定清空 Buddy 的对话记忆吗？此操作不可恢复。")) return;
+  try { await api("DELETE", "/buddy/history"); } catch { /* 尽力清空 */ }
+  buddyHistory = [];
+  buddyRender();
+  toast("记忆已清空");
+};
+function buddyTitle(text) {
+  const line = String(text || "").split("\n").map(s => s.trim()).find(s => s && !/^#{1,6}$/.test(s)) || "Buddy 回复";
+  return line.replace(/^[#>*\-\s]+/, "").replace(/^#+\s*/, "").slice(0, 40) || "Buddy 回复";
+}
+function buddyActions(m) {
+  const i = buddyHistory.indexOf(m);
+  let html = '<div class="bmsg-actions">';
+  html += m.draftId
+    ? '<button class="btn btn-sm" onclick="buddyGoto(\'ideas\')">📝 查看草稿</button>'
+    : '<button class="btn btn-sm" onclick="buddySaveDraft(' + i + ')">📝 存草稿</button>';
+  html += m.docId
+    ? '<button class="btn btn-sm" onclick="buddyGoto(\'docs\')">📁 查看文档</button>'
+    : '<button class="btn btn-sm" onclick="buddySaveDoc(' + i + ')">📄 存为文档</button>';
+  html += m.planId
+    ? '<button class="btn btn-sm" onclick="buddyGoto(\'planexec\')">🛰️ 查看计划</button>'
+    : '<button class="btn btn-sm" onclick="buddyToPlan(' + i + ')">🛰️ 发到计划库</button>';
+  html += m.proposalId
+    ? '<button class="btn btn-sm" onclick="buddyGoto(\'proposals\')">📋 查看方案</button>'
+    : '<button class="btn btn-sm" onclick="buddyToProposal(' + i + ')">📋 转为方案</button>';
+  html += "</div>";
+  return html;
+}
+function buddyRender(streaming) {
+  const box = $("#buddyMsgs");
+  if (!box) return;
+  if (!buddyHistory.length) {
+    buddyHistory = [{ role: "assistant", content: "你好，我是助理 Buddy 🤖 全能 AI——写方案、做分析、出脚本、答疑解惑都行，直接说需求就好。\n回复下方可存草稿、存文档、发到计划库或转为方案。", seed: true }];
+  }
+  box.innerHTML = buddyHistory.map((m, i) => {
+    const thinking = streaming && i === buddyHistory.length - 1;
+    const acts = (m.role === "assistant" && !m.seed && !thinking && (m.content || "").trim()) ? buddyActions(m) : "";
+    const attChips = (m.role === "user" && m.attIds && m.attIds.length)
+      ? `<div class="bmsg-atts">${m.attIds.map(a => `<span class="att-chip-mini">📎 ${esc(a.name)}</span>`).join("")}</div>` : "";
+    return `<div class="bmsg ${m.role}${thinking ? " think" : ""}">${attChips}${esc(m.content || "…")}${acts}</div>`;
+  }).join("");
+  box.scrollTop = box.scrollHeight;
+}
+window.buddyQuick = (text) => { const el = $("#buddyInput"); if (el) el.value = text; window.buddySend(); };
+window.buddySend = async () => {
+  if (buddyAbort) { buddyAbort.abort(); return; }
+  const el = $("#buddyInput");
+  const text = (el && el.value || "").trim();
+  const atts = attPayload("buddy");
+  if (!text && !atts.length) return toast("请输入内容，或上传附件让 AI 分析");
   if (el) el.value = "";
-  await runAITask(a.id);
-  toast("已直通主对话，复制指令交给斜杠喵即可执行");
+  const attMeta = atts.length ? { attIds: atts } : undefined;
+  buddyHistory.push({ role: "user", content: text, ...(attMeta || {}) });
+  _att["buddy"] = []; attRender("buddy");
+  buddyHistory.push({ role: "assistant", content: "" });
+  buddyRender(true);
+  const btn = $("#buddySend");
+  const cur = buddyHistory.length - 1;
+  const ctrl = new AbortController(); buddyAbort = ctrl;
+  const setBusy = (b) => { if (!btn) return; btn.innerHTML = b ? "⏹ 停止生成" : "🚀 发送（Enter）"; btn.classList.toggle("btn-danger", b); };
+  setBusy(true);
+  let acc = "";
+  try {
+    const r = await fetch("/api/buddy/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + (state.token || "") },
+      body: JSON.stringify({ messages: buddyHistory.slice(0, -1).filter(m => !m.seed), attachments: atts.map(a => a.id) }),
+      signal: ctrl.signal,
+    });
+    if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || "HTTP " + r.status); }
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop();
+      for (const line of lines) {
+        const s = line.trim();
+        if (!s.startsWith("data:")) continue;
+        const p = s.slice(5).trim();
+        if (!p || p === "[DONE]") continue;
+        let j; try { j = JSON.parse(p); } catch { continue; }
+        if (j.error) throw new Error(j.error);
+        if (j.delta) { acc += j.delta; buddyHistory[cur].content = acc; buddyRender(true); }
+      }
+    }
+    if (!acc) { buddyHistory[cur].content = "（模型没有返回内容，请重试或稍后再试）"; buddyRender(); }
+    else buddyRender();
+  } catch (e) {
+    if (e && (e.name === "AbortError" || String(e.message || "").includes("abort"))) {
+      buddyHistory[cur].content = (acc ? acc + "\n\n" : "") + "（已停止生成）";
+    } else {
+      buddyHistory[cur].content = "⚠️ " + (e.message || "调用失败");
+    }
+    buddyRender();
+  } finally {
+    buddyAbort = null;
+    setBusy(false);
+    buddySync();
+    if (el) el.focus();
+  }
+};
+window.buddySaveDraft = async (i) => {
+  const m = buddyHistory[i]; if (!m || !m.content) return;
+  try {
+    const d = await api("POST", "/drafts", {
+      title: buddyTitle(m.content), content: m.content, ownerId: state.user,
+      status: "草稿", source: "buddy", createdAt: Date.now(), updatedAt: Date.now(),
+    });
+    m.draftId = d.id; buddyRender(); buddySync();
+    toast("已存入想法库草稿，可到「智能 → 想法库」继续完善");
+  } catch (e) { toast("存草稿失败：" + (e.message || "")); }
+};
+window.buddySaveDoc = async (i) => {
+  const m = buddyHistory[i]; if (!m || !m.content) return;
+  try {
+    const d = await api("POST", "/docs", {
+      title: buddyTitle(m.content), category: "AI生成", type: "doc", duration: 0,
+      body: m.content, author: state.user, updatedAt: Date.now(), progress: {},
+    });
+    m.docId = d.id; buddyRender(); buddySync();
+    toast("已存入学习库，可点「查看文档」打开");
+  } catch (e) { toast("存文档失败：" + (e.message || "")); }
+};
+window.buddyToPlan = async (i) => {
+  const m = buddyHistory[i]; if (!m || !m.content) return;
+  try {
+    const p = await api("POST", "/plans", {
+      title: buddyTitle(m.content), desc: m.content, status: "进行中",
+      ownerId: state.user, start: new Date().toISOString().slice(0, 10), end: "",
+      progress: 0, collaborators: [],
+    });
+    m.planId = p.id; buddyRender(); buddySync();
+    toast("已发到计划库，可点「查看计划」打开");
+  } catch (e) { toast("发送失败：" + (e.message || "")); }
+};
+// Buddy 对话产出 → 方案库（打通：对话成果可直接成为方案 v1 草稿）
+window.buddyToProposal = async (i) => {
+  const m = buddyHistory[i]; if (!m || !m.content) return;
+  if (!state.canEdit) return toast("转方案需要协作者/管理员权限，可先「存草稿」到想法库再转给负责人");
+  try {
+    const pr = await api("POST", "/proposals", {
+      title: buddyTitle(m.content), content: m.content,
+      status: "草稿", version: 1, createdBy: state.user, source: "buddy",
+    });
+    m.proposalId = pr.id; buddyRender(); buddySync();
+    toast("已转为方案（v1 草稿），可点「查看方案」继续 AI 改写升版");
+  } catch (e) { toast("转方案失败：" + (e.message || "")); }
+};
+window.buddyGoto = (route) => {
+  const panel = $("#buddyPanel"); if (panel) panel.classList.add("hidden");
+  state.route = route; location.hash = route; renderNav(); render();
 };
 (function initBuddy() {
-  const fab = $("#buddyFab"), panel = $("#buddyPanel"), close = $("#buddyClose");
-  if (fab) fab.onclick = () => panel.classList.toggle("hidden");
+  const fab = $("#buddyFab"), panel = $("#buddyPanel"), close = $("#buddyClose"), send = $("#buddySend"), input = $("#buddyInput");
+  // 附件区初始化（Buddy 对话支持拖拽/粘贴/点选上传）
+  const attZone = $("#buddyAttZone");
+  if (attZone) attZone.innerHTML = attWidgetHTML("buddy", { hint: "支持图片 / PDF / Word / Excel 等，可拖拽或粘贴" });
+  attEnableDrop("buddy", "#buddyPanel");
+  attEnablePaste("buddy", "#buddyInput");
+  if (fab) fab.onclick = async () => {
+    panel.classList.toggle("hidden");
+    if (!panel.classList.contains("hidden")) {
+      await buddyLoad(); // 首次打开时拉取持久记忆
+      buddyRender();
+      if (input) setTimeout(() => input.focus(), 50);
+    }
+  };
   if (close) close.onclick = () => panel.classList.add("hidden");
+  if (send) send.onclick = () => window.buddySend();
+  if (input) input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); window.buddySend(); } });
   document.addEventListener("click", (e) => {
     if (panel && !panel.classList.contains("hidden") && !panel.contains(e.target) && e.target !== fab && !fab.contains(e.target)) panel.classList.add("hidden");
   });
