@@ -407,7 +407,7 @@ app.use("/api", (req, res, next) => { console.log(`[REQ] ${req.method} ${req.pat
 app.use(express.static(PUBLIC_DIR, {
   etag: true, lastModified: true, maxAge: 0,
   setHeaders: (res, filePath) => {
-    if (filePath.endsWith(".html")) res.setHeader("Cache-Control", "no-cache");
+    if (filePath.endsWith(".html") || filePath.endsWith(".js")) res.setHeader("Cache-Control", "no-cache");
     else if (filePath.endsWith(".png")) res.setHeader("Cache-Control", "public, max-age=604800");
   }
 }));
