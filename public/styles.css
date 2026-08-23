@@ -258,27 +258,27 @@ body.readonly a[download]{display:none!important}
   .gantt-ticks{padding-left:104px}
 }
 
-/* ---------- 媒体库：类型分区 + 区内分类 + 卡片缩略 + 预览灯箱 ---------- */
-.media-blocks{display:flex;flex-direction:column;gap:26px;margin-top:6px}
-.media-block{border:1px solid var(--line);border-radius:14px;padding:16px 16px 18px;background:var(--panel)}
-.media-block-head{display:flex;align-items:center;gap:10px;margin:0 0 14px;font-weight:700;font-size:16px;flex-wrap:wrap}
-.media-block-head::before{content:"";width:4px;height:18px;border-radius:3px;background:linear-gradient(180deg,var(--brand),var(--brand2))}
-.media-block-ic{font-size:20px}
-.media-block-title{letter-spacing:.5px}
-.media-block-cats{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto}
-.media-block-cats .chip{font-weight:400}
+/* ---------- 媒体库：左侧分类导航 + 右侧卡片网格 ---------- */
+.media-layout{display:flex;gap:18px;align-items:flex-start}
+.media-catnav{width:200px;flex:none;border:1px solid var(--line);border-radius:14px;padding:14px 10px;background:var(--panel);position:sticky;top:18px}
+.media-catnav-title{font-size:13px;font-weight:700;color:var(--ink2);padding:0 8px 10px;border-bottom:1px solid var(--line);margin-bottom:6px}
+.media-catnav-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;cursor:pointer;transition:all .12s;font-size:13.5px;color:var(--ink)}
+.media-catnav-item:hover{background:var(--bg)}
+.media-catnav-item.active{background:var(--brand);color:#fff}
+.media-catnav-item.active .media-catnav-count{background:rgba(255,255,255,.25);color:#fff}
+.media-catnav-icon{width:20px;text-align:center;font-size:15px}
+.media-catnav-label{flex:1}
+.media-catnav-count{font-size:11px;color:var(--ink2);background:var(--bg);border-radius:999px;padding:1px 8px}
+.media-main{flex:1;min-width:0}
+.media-blocks{display:flex;flex-direction:column;gap:22px;margin-top:10px}
+.media-block{border:1px solid var(--line);border-radius:14px;padding:14px 14px 16px;background:var(--panel)}
+.media-block-head{display:flex;align-items:center;gap:10px;margin:0 0 12px;font-weight:700;font-size:15px}
+.media-block-head::before{content:"";width:4px;height:16px;border-radius:3px;background:linear-gradient(180deg,var(--brand),var(--brand2))}
+.media-block-title{letter-spacing:.3px}
 .muted-chip{font-weight:400;font-size:12px}
-.media-sub{margin-top:4px}
-.media-sub-head{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--ink2);margin:10px 0 10px}
-.media-sub-head::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--brand);opacity:.5}
-.media-sub-head .muted{font-weight:400;font-size:12px}
-.media-toolbar{display:flex;flex-direction:column;gap:10px;border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-top:12px;background:var(--panel)}
-.media-toolbar-row{display:flex;align-items:flex-start;gap:10px}
-.media-toolbar-label{flex:none;font-size:12px;font-weight:700;color:var(--ink2);padding:5px 10px;border-radius:8px;background:var(--bg);border:1px solid var(--line)}
-.media-typenav{display:flex;gap:8px;flex-wrap:wrap}
-.media-nav-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--bg);border-radius:999px;padding:5px 12px;font-size:13px;cursor:pointer;transition:all .12s;color:inherit}
-.media-nav-chip:hover{border-color:var(--brand);color:var(--brand);transform:translateY(-1px)}
-.media-nav-chip span{font-size:11px;color:var(--ink2);background:var(--line);border-radius:999px;padding:1px 7px}
+.media-toolbar{display:flex;flex-direction:column;gap:8px;border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-top:10px;background:var(--panel)}
+.media-toolbar-row{display:flex;align-items:flex-start;gap:8px}
+.media-toolbar-label{flex:none;font-size:12px;font-weight:700;color:var(--ink2);padding:4px 8px;border-radius:6px;background:var(--bg);border:1px solid var(--line)}
 .media-card{cursor:pointer;transition:transform .12s,box-shadow .12s;display:flex;flex-direction:column}
 .media-card:hover{transform:translateY(-2px);box-shadow:0 10px 26px rgba(20,30,70,.12)}
 .media-thumb{width:100%;aspect-ratio:16/9;background:var(--bg);border-radius:10px;overflow:hidden;display:flex;align-items:center;justify-content:center;border:1px solid var(--line)}

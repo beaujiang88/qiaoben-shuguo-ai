@@ -761,64 +761,61 @@ function mediaCard(m) {
     <div class='meta' style='margin-top:6px'>已推送 ${pushed.length} 个客户${m.pushedWechat ? ` · <span style="color:#07c160">✓ 公众号 ${esc(m.pushedWechat)}</span>` : ""}</div>
   </div>`;
 }
-// 媒体库分类快捷导航：滚动到对应分类区块
-window.mediaJump = (i) => {
-  const el = document.getElementById("msec-" + i);
-  if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-};
-let mediaTypeFilter = "全部类型";
-window.setMediaType = (t) => { mediaTypeFilter = t; render(); };
+let mediaCatFilter = "全部素材";
+window.setMediaCat = (c) => { mediaCatFilter = c; render(); };
 function renderMedia(main) {
   const allList = state.db.media.filter(m => matches(m, state.query));
   const kindOf = m => m.kind || "未分类";
   const catOf = m => m.category || "未分类";
-  // 区域 + 类型 双筛选
+  // 区域筛选
   const regFiltered = mediaRegionTab === "全部区域" ? allList : allList.filter(m => (m.region || "通用") === mediaRegionTab);
-  const list = mediaTypeFilter === "全部类型" ? regFiltered : regFiltered.filter(m => kindOf(m) === mediaTypeFilter);
-  // 出现过的分类（作为分区与导航主体）
-  const cats = [];
-  regFiltered.forEach(m => { const c = catOf(m); if (!cats.includes(c)) cats.push(c); });
-  const ordered = cats.slice().sort((a, b) => regFiltered.filter(m => catOf(m) === b).length - regFiltered.filter(m => catOf(m) === a).length);
-  // 出现过的类型（作为筛选 tabs）
+  // 左侧分类导航：全部素材 + 按 kind 分类
   const kinds = [];
   regFiltered.forEach(m => { const k = kindOf(m); if (!kinds.includes(k)) kinds.push(k); });
   const kindOrdered = [...MEDIA_KINDS.filter(k => kinds.includes(k)), ...kinds.filter(k => !MEDIA_KINDS.includes(k))];
-  const regionTabs = `<div class="row" style="gap:6px;flex-wrap:wrap">${MEDIA_REGIONS.map(r =>
-    `<button class="btn btn-sm ${mediaRegionTab === r ? "btn-primary" : ""}" onclick="setMediaRegion('${r}')">${r} ${r === "全部区域" ? allList.length : allList.filter(m => (m.region || "通用") === r).length}</button>`).join("")}</div>`;
-  const typeTabs = `<div class="row" style="gap:6px;flex-wrap:wrap">${["全部类型", ...kindOrdered].map(t =>
-    `<button class="btn btn-sm ${mediaTypeFilter === t ? "btn-primary" : ""}" onclick="setMediaType('${t}')">${t === "全部类型" ? t : (MEDIA_ICON[t] || "📁") + " " + t} ${t === "全部类型" ? regFiltered.length : regFiltered.filter(m => kindOf(m) === t).length}</button>`).join("")}</div>`;
-  // 分类快捷导航条（点击滚动到分类区块）
-  const catNav = ordered.length ? `<div class="media-typenav">${ordered.map((c, i) => {
-    const n = list.filter(m => catOf(m) === c).length;
-    if (!n) return "";
-    return `<button class="media-nav-chip" onclick="mediaJump(${i})">${esc(c)}<span>${n}</span></button>`;
-  }).join("")}</div>` : "";
-  // 按分类分区，块内再按类型细分
+  const catNavItems = [
+    { key: "全部素材", label: "全部素材", icon: "📁", count: regFiltered.length },
+    ...kindOrdered.map(k => ({ key: k, label: k, icon: MEDIA_ICON[k] || "📁", count: regFiltered.filter(m => kindOf(m) === k).length }))
+  ];
+  const catNav = `<div class="media-catnav">
+    <div class="media-catnav-title">分类导航</div>
+    ${catNavItems.map(item => `
+      <div class="media-catnav-item ${mediaCatFilter === item.key ? 'active' : ''}" onclick="setMediaCat('${item.key}')">
+        <span class="media-catnav-icon">${item.icon}</span>
+        <span class="media-catnav-label">${esc(item.label)}</span>
+        <span class="media-catnav-count">${item.count}</span>
+      </div>
+    `).join("")}
+  </div>`;
+  // 右侧内容：按分类筛选
+  const list = mediaCatFilter === "全部素材" ? regFiltered : regFiltered.filter(m => kindOf(m) === mediaCatFilter);
+  // 区域内再按分类细分
+  const cats = [];
+  list.forEach(m => { const c = catOf(m); if (!cats.includes(c)) cats.push(c); });
+  const ordered = cats.slice().sort((a, b) => list.filter(m => catOf(m) === b).length - list.filter(m => catOf(m) === a).length);
   const blocks = ordered.map((cat, i) => {
     const items = list.filter(m => catOf(m) === cat);
     if (!items.length) return "";
-    const kds = [];
-    items.forEach(m => { const k = kindOf(m); if (!kds.includes(k)) kds.push(k); });
-    const inner = kds.length <= 1
-      ? `<div class="grid cols-3">${items.map(mediaCard).join("")}</div>`
-      : kds.map(k => {
-          const sub = items.filter(m => kindOf(m) === k);
-          return `<div class="media-sub"><div class="media-sub-head"><span>${MEDIA_ICON[k] || "📁"} ${esc(k)}</span><span class="muted">${sub.length} 项</span></div><div class="grid cols-3">${sub.map(mediaCard).join("")}</div></div>`;
-        }).join("");
     return `<section class="media-block" id="msec-${i}">
-      <div class="media-block-head"><span class="media-block-title">${esc(cat)}</span><span class="chip muted-chip">${items.length} 项</span><span class="media-block-cats">${[...new Set(items.map(m => (m.region || "通用")))].map(r => `<span class="chip">${esc(r)}</span>`).join("")}</span></div>
-      ${inner}
+      <div class="media-block-head"><span class="media-block-title">${esc(cat)}</span><span class="chip muted-chip">${items.length} 项</span></div>
+      <div class="grid cols-3">${items.map(mediaCard).join("")}</div>
     </section>`;
-  }).join("") || "<div class='empty'>当前筛选下暂无素材，点右上角新增或调整筛选</div>";
-  main.innerHTML = `<div class='page-head'><div><h2>媒体库</h2><div class='sub'>按分类分区导航：功能文章 / 品牌物料 / 图片素材等各自成区，可按区域与类型筛选，点击卡片即可预览</div></div>
-    <button class='btn btn-primary' onclick='openMediaForm()'>＋ 新增素材</button></div>
-    <div class="media-toolbar">
-      <div class="media-toolbar-row"><span class="media-toolbar-label">区域</span>${regionTabs}</div>
-      <div class="media-toolbar-row"><span class="media-toolbar-label">类型</span>${typeTabs}</div>
-      <div class="media-toolbar-row"><span class="media-toolbar-label">分类</span>${catNav || "<span class='muted' style='font-size:13px'>暂无素材</span>"}</div>
-    </div>
-    <div class="muted" style="margin:8px 0 12px;font-size:13px">共 ${list.length} 项素材 · ${ordered.filter(c => list.some(m => catOf(m) === c)).length} 个分类区块</div>
-    <div class="media-blocks">${blocks}</div>`;
+  }).join("") || "<div class='empty'>当前分类下暂无素材</div>";
+  // 区域筛选 tabs（放在右侧顶部）
+  const regionTabs = `<div class="row" style="gap:6px;flex-wrap:wrap">${MEDIA_REGIONS.map(r =>
+    `<button class="btn btn-sm ${mediaRegionTab === r ? "btn-primary" : ""}" onclick="setMediaRegion('${r}')">${r} ${r === "全部区域" ? allList.length : allList.filter(m => (m.region || "通用") === r).length}</button>`).join("")}</div>`;
+  main.innerHTML = `
+    <div class="media-layout">
+      ${catNav}
+      <div class="media-main">
+        <div class="page-head"><div><h2>媒体库</h2><div class="sub">${mediaCatFilter === "全部素材" ? "全部素材" : esc(mediaCatFilter)} · ${list.length} 项</div></div>
+          <button class="btn btn-primary" onclick="openMediaForm()">＋ 新增素材</button></div>
+        <div class="media-toolbar">
+          <div class="media-toolbar-row"><span class="media-toolbar-label">区域</span>${regionTabs}</div>
+        </div>
+        <div class="media-blocks">${blocks}</div>
+      </div>
+    </div>`;
 }
 window.previewMedia = (id) => {
   const m = state.db.media.find(x => x.id === id); if (!m) return;
