@@ -33,8 +33,8 @@ const COLS = ["members", "plans", "tasks", "proposals", "feedback", "customers",
 const TASK_CATS = ["产品规划", "技术开发", "市场招商", "门店运营", "内容生产", "培训考核", "合规风控", "客户服务"];
 let taskCatTab = "全部";
 window.setTaskCat = (c) => { taskCatTab = c; render(); };
-const MEDIA_KINDS = ["图文", "文章", "海报", "视频", "执行文档", "活动方案", "案例图文", "图片", "知识"];
-const MEDIA_ICON = { 图文: "📄", 文章: "📝", 海报: "🖼️", 视频: "🎬", 执行文档: "📋", 活动方案: "📅", 案例图文: "📸", 图片: "🖼️", 知识: "💡" };
+const MEDIA_KINDS = ["图文文章", "视频", "图片海报", "执行文档", "活动方案", "案例图文", "知识"];
+const MEDIA_ICON = { 图文文章: "📝", 视频: "🎬", 图片海报: "🖼️", 执行文档: "📋", 活动方案: "📅", 案例图文: "📸", 知识: "💡" };
 const MEDIA_REGIONS = ["全部区域", "通用", "华南", "华东", "华北", "西南", "全国"];
 let mediaRegionTab = "全部区域";
 window.setMediaRegion = (r) => { mediaRegionTab = r; render(); };
@@ -704,6 +704,46 @@ function renderProposals(main) {
       <div class="row" style="margin-top:10px"><button class="btn btn-sm" onclick="openPropForm('${p.id}')">编辑/改版</button>
       <button class="btn btn-sm btn-danger" onclick="del('proposals','${p.id}')">删除</button></div></div>`).join("") || "<div class='empty'>暂无方案</div>"}</div>`;
 }
+// 把关联任务格式化为可拉入修改台的文本
+function formatTaskText(t) {
+  const plan = state.db.plans.find(p => p.id === t.planId);
+  return `【关联任务】${t.title}\n【所属计划】${plan ? plan.title : "—"}\n【任务状态】${t.status || "todo"}\n【任务说明】${t.desc || "（无描述）"}\n\n`;
+}
+// 更新方案表单里的任务预览窗口
+window.updatePropTaskPreview = () => {
+  const box = $("#propTaskPreview"); if (!box) return;
+  const sel = $('#modalBody [name="relatedTaskId"]');
+  const tid = sel ? sel.value : "";
+  const t = state.db.tasks.find(x => x.id === tid);
+  if (!t) {
+    box.innerHTML = `<div class="muted" style="padding:4px 0">未选择关联任务。在上方「关联任务」中选择后，此处显示任务详情预览，可拖入内容区让 AI 修改。</div>`;
+    box.draggable = false;
+    return;
+  }
+  const plan = state.db.plans.find(p => p.id === t.planId);
+  box.innerHTML = `
+    <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:6px">
+      <b>${esc(t.title)}</b><span class="chip ${statusChip(t.status)}">${esc(t.status || "todo")}</span></div>
+    ${plan ? `<div class="muted" style="margin-bottom:4px">📁 所属计划：${esc(plan.title)}</div>` : ""}
+    <div style="white-space:pre-wrap">${esc(t.desc || "（无描述）")}</div>
+    <div class="row" style="justify-content:flex-end;margin-top:8px">
+      <span class="muted" style="font-size:12px;margin-right:8px">拖拽我到内容区，或</span>
+      <button class="btn btn-sm btn-primary" type="button" id="pullTaskBtn">⤵️ 拉入修改台</button></div>`;
+  box.draggable = true;
+  box.ondragstart = (e) => {
+    e.dataTransfer.setData("text/plain", formatTaskText(t));
+    e.dataTransfer.effectAllowed = "copy";
+  };
+  const btn = $("#pullTaskBtn");
+  if (btn) btn.onclick = () => pullTaskToEditor(t.id);
+};
+// 把任务文本插入方案内容编辑区（光标处）
+window.pullTaskToEditor = (tid) => {
+  const t = state.db.tasks.find(x => x.id === tid); if (!t) return;
+  const ta = $('#modalBody [name="content"]'); if (!ta) return;
+  insertAtCursor(ta, formatTaskText(t));
+  toast("任务已拉入修改台，可点「🤖 AI 协助填写」让 AI 基于它修改");
+};
 window.openPropForm = (id) => {
   const p = id ? state.db.proposals.find(x => x.id === id) : {};
   const isEdit = !!id;
@@ -713,8 +753,27 @@ window.openPropForm = (id) => {
     { key: "status", label: "状态", type: "select", options: ["草稿", "评审中", "已定稿"].map(s => ({ v: s, l: s })) },
     { key: "customerId", label: "关联客户(可选)", type: "select", options: [{ v: "", l: "无" }, ...state.db.customers.map(c => ({ v: c.id, l: c.name + (c.type ? `（${c.type}端）` : "") }))] },
     { key: "relatedTaskId", label: "关联任务(可选)", type: "select", options: [{ v: "", l: "无" }, ...state.db.tasks.map(t => ({ v: t.id, l: t.title }))] },
-  ], p) + (isEdit ? `<div class="muted" style="margin:6px 0">当前 v${p.version}，保存后将升级为 v${p.version + 1}</div>` : ""));
-  $("#modalBody").insertAdjacentHTML("afterbegin", aiBtn("proposal", "content", { hint: "让 AI 帮你起草方案正文（背景、策略、步骤、KPI）。" }));
+  ], p) + (isEdit ? `<div class="muted" style="margin:6px 0">当前 v${p.version}，保存后将升级为 v${p.version + 1}</div>` : "") + `
+    <div class="field" style="margin-top:10px">
+      <label>📋 关联任务预览（小窗口 · 拖拽到内容区 / 拉入修改台，让 AI 基于任务改方案）</label>
+      <div class="prop-task-preview" id="propTaskPreview"></div>
+    </div>`);
+  $("#modalBody").insertAdjacentHTML("afterbegin", aiBtn("proposal", "content", { hint: "让 AI 帮你起草方案正文（背景、策略、步骤、KPI）。也可先拉入关联任务，让 AI 基于任务说明修改。" }));
+  // 关联任务变化 → 刷新预览
+  const relSel = $('#modalBody [name="relatedTaskId"]');
+  if (relSel) relSel.addEventListener("change", updatePropTaskPreview);
+  updatePropTaskPreview();
+  // 内容区支持拖放接收任务文本
+  const ta = $('#modalBody [name="content"]');
+  if (ta) {
+    ta.addEventListener("dragover", e => { e.preventDefault(); ta.classList.add("drop-target"); });
+    ta.addEventListener("dragleave", () => ta.classList.remove("drop-target"));
+    ta.addEventListener("drop", e => {
+      e.preventDefault(); ta.classList.remove("drop-target");
+      const text = e.dataTransfer.getData("text/plain");
+      if (text) { insertAtCursor(ta, text); toast("已拖入修改台"); }
+    });
+  }
   $("#formSubmit").onclick = async () => {
     const fd = readForm(); if (!fd.title) return toast("请填标题");
     if (isEdit) fd.version = p.version + 1;
@@ -737,9 +796,28 @@ window.aiWriteProposal = () => {
 };
 
 // ---------- 媒体库 ----------
+// 在 textarea 光标处插入文本
+window.insertAtCursor = (ta, text) => {
+  if (!ta) return;
+  const s = ta.selectionStart == null ? ta.value.length : ta.selectionStart;
+  const e = ta.selectionEnd == null ? ta.value.length : ta.selectionEnd;
+  ta.value = ta.value.slice(0, s) + text + ta.value.slice(e);
+  ta.focus();
+  const pos = s + text.length;
+  ta.selectionStart = ta.selectionEnd = pos;
+};
+// 富媒体内容：把 ![图片](url) / ![视频](url) 语法渲染成真实标签
+function renderRichContent(text) {
+  if (!text) return "";
+  let s = esc(text);
+  s = s.replace(/!\[图片\]\(([^)\s]+)\)/g, (m0, u) => `<img src="${u}" alt="" loading="lazy" style="max-width:100%;border-radius:10px;margin:8px 0;display:block">`);
+  s = s.replace(/!\[视频\]\(([^)\s]+)\)/g, (m0, u) => `<video src="${u}" controls playsinline style="max-width:100%;border-radius:10px;margin:8px 0;display:block"></video>`);
+  s = s.replace(/\n/g, "<br>");
+  return s;
+}
 function mediaThumb(m) {
   const u = m.url || "";
-  const isImg = /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(u) || m.kind === "图片";
+  const isImg = /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(u) || m.kind === "图片海报";
   const isVid = /\.(mp4|webm|ogg|mov)$/i.test(u) || m.kind === "视频";
   if (isImg && u) return `<img src='${esc(u)}' alt='' loading='lazy'>`;
   if (isVid && u) return `<video src='${esc(u)}' muted preload='metadata'></video>`;
@@ -820,7 +898,7 @@ function renderMedia(main) {
 window.previewMedia = (id) => {
   const m = state.db.media.find(x => x.id === id); if (!m) return;
   const u = m.url || "";
-  const isImg = /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(u) || m.kind === "图片";
+  const isImg = /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(u) || m.kind === "图片海报";
   const isVid = /\.(mp4|webm|ogg|mov)$/i.test(u) || m.kind === "视频";
   let body = "";
   if (isImg && u) body = `<img class='lb-img' src='${esc(u)}'>`;
@@ -830,7 +908,7 @@ window.previewMedia = (id) => {
     else if (/\.(mp4|webm|ogg|mov)$/i.test(u)) body = `<video class='lb-video' src='${esc(u)}' controls autoplay></video>`;
     else body = `<div class='lb-file'><div style='font-size:60px'>📄</div><a class='btn btn-primary' href='${esc(u)}' target='_blank' download>⬇️ 下载文件</a></div>`;
   }
-  else if (m.kind === "图文" && m.content) body = `<div class='doc-body' style='white-space:pre-wrap;max-height:60vh;overflow:auto'>${esc(m.content)}</div>`;
+  else if ((m.kind === "图文文章" || m.kind === "图文") && m.content) body = `<div class='doc-body rich-body' style='max-height:60vh;overflow:auto'>${renderRichContent(m.content)}</div>`;
   else if (u) body = `<div class='lb-link'><p class='muted'>外部链接</p><a class='btn btn-primary' href='${esc(u)}' target='_blank' rel='noopener'>🔗 打开链接</a></div>`;
   else body = `<div class='muted'>该素材暂无可预览内容</div>`;
   const lb = $("#lightbox");
@@ -896,7 +974,7 @@ window.openWechatPush = (id) => {
 };
 window.openTextMedia = (id) => {
   const m = state.db.media.find(x => x.id === id); if (!m) return;
-  openModal("图文 · " + m.title, `<div class='muted' style='margin-bottom:8px'>${esc(m.desc || "")}</div><div class='doc-body' style='white-space:pre-wrap;max-height:60vh;overflow:auto'>${esc(m.content || "")}</div>
+  openModal("图文 · " + m.title, `<div class='muted' style='margin-bottom:8px'>${esc(m.desc || "")}</div><div class='doc-body rich-body' style='max-height:60vh;overflow:auto'>${renderRichContent(m.content)}</div>
     <div class='row' style='justify-content:flex-end;margin-top:10px'><button class='btn btn-primary' onclick='openForwardModal("${m.id}")'>↗ 转发此图文</button></div>`);
 };
 window.openMediaForm = (id) => {
@@ -907,13 +985,62 @@ window.openMediaForm = (id) => {
     { key: "region", label: "区域分类", type: "select", options: MEDIA_REGIONS.slice(1).map(r => ({ v: r, l: r })) },
     { key: "category", label: "分类", placeholder: "如：功能文章 / 健康知识 / 品牌物料" },
     { key: "url", label: "下载/外链地址", placeholder: "https://... 或下方上传本地文件" },
-    { key: "content", label: "图文内容（图文类型填此）", type: "textarea", placeholder: "图文正文，支持多段文字，转发时一并带出" },
+    { key: "content", label: "图文内容（支持插入图片 / 视频，转发预览一并带出）", type: "textarea", placeholder: "图文正文，可多段文字，并用下方按钮插入图片视频" },
     { key: "desc", label: "说明", type: "textarea" },
     { key: "tags", label: "标签", type: "tags" },
   ], m));
   $("#modalBody").insertAdjacentHTML("afterbegin", aiBtn("media", "content", { titleField: "title", hint: "让 AI 帮你生成图文/文案/视频脚本等素材内容。" }));
-  // 上传本地文件
-  $("#modalBody").insertAdjacentHTML("beforeend", `<div class="field" style="margin-top:10px"><label>或上传本地文件（图片 / 视频 / 文档，≤50MB）</label><input id="mediaFile" type="file"><div class="row" style="margin-top:6px"><button class="btn btn-sm" id="uploadBtn" type="button">⬆️ 上传并填入地址</button><span id="uploadHint" class="muted" style="font-size:12px"></span></div></div>`);
+  // 富媒体插入工具栏（插到内容 textarea 前面）
+  const contentTA = $('#modalBody [name="content"]');
+  if (contentTA) {
+    const others = state.db.media.filter(x => x.url && x.id !== id);
+    const bar = document.createElement("div");
+    bar.className = "rich-toolbar";
+    bar.innerHTML = `
+      <button class="btn btn-sm" type="button" id="insImgBtn">🖼️ 插入图片</button>
+      <button class="btn btn-sm" type="button" id="insVidBtn">🎬 插入视频</button>
+      <button class="btn btn-sm" type="button" id="insUpBtn">⬆️ 上传并插入</button>
+      <select id="insLibSel" class="rich-libsel" title="从媒体库引用已有素材">
+        <option value="">📚 从媒体库引用…</option>
+        ${others.map(x => `<option value='${esc(x.id)}'>${esc((x.title || "").slice(0, 22))}（${esc(x.kind || "")}）</option>`).join("")}
+      </select>
+      <input type="file" id="richFile" accept="image/*,video/*" hidden>`;
+    contentTA.parentNode.insertBefore(bar, contentTA);
+    const insertMediaRef = (kindLabel, url) => { insertAtCursor(contentTA, `\n![${kindLabel}](${url})\n`); toast(`已插入${kindLabel}`); };
+    $("#insImgBtn").onclick = () => {
+      const url = prompt("图片地址（https://... 或 /uploads/...）", "").trim();
+      if (url) insertMediaRef("图片", url);
+    };
+    $("#insVidBtn").onclick = () => {
+      const url = prompt("视频地址（https://... 或 /uploads/...）", "").trim();
+      if (url) insertMediaRef("视频", url);
+    };
+    $("#insUpBtn").onclick = () => $("#richFile").click();
+    $("#richFile").onchange = async () => {
+      const f = $("#richFile").files[0]; if (!f) return;
+      const fd2 = new FormData(); fd2.append("file", f);
+      toast("上传中…");
+      try {
+        const r = await fetch("/api/upload", { method: "POST", headers: { "Authorization": "Bearer " + state.token }, body: fd2 });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || "上传失败");
+        const kindLabel = /^video\//.test(f.type) ? "视频" : "图片";
+        insertMediaRef(kindLabel, d.url);
+        // 若主地址为空则顺便填上
+        const urlEl = $('[name="url"]'); if (urlEl && !urlEl.value) urlEl.value = d.url;
+      } catch (e) { toast("上传失败：" + e.message); }
+      $("#richFile").value = "";
+    };
+    $("#insLibSel").onchange = () => {
+      const mid = $("#insLibSel").value; if (!mid) return;
+      const x = state.db.media.find(y => y.id === mid); if (!x || !x.url) return;
+      const kindLabel = x.kind === "视频" ? "视频" : "图片";
+      insertMediaRef(kindLabel, x.url);
+      $("#insLibSel").value = "";
+    };
+  }
+  // 上传本地文件（作为素材主文件）
+  $("#modalBody").insertAdjacentHTML("beforeend", `<div class="field" style="margin-top:10px"><label>或上传本地文件作为素材主文件（图片 / 视频 / 文档，≤50MB）</label><input id="mediaFile" type="file"><div class="row" style="margin-top:6px"><button class="btn btn-sm" id="uploadBtn" type="button">⬆️ 上传并填入地址</button><span id="uploadHint" class="muted" style="font-size:12px"></span></div></div>`);
   $("#uploadBtn").onclick = async () => {
     const f = $("#mediaFile").files[0]; if (!f) return toast("请先选择文件");
     const fd2 = new FormData(); fd2.append("file", f);

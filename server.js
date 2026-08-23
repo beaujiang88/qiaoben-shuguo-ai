@@ -188,16 +188,16 @@ function seed() {
   ];
   // 媒体库：功能文章 / 健康知识 / 图片 / 视频，可推送给客户（pushedTo 记录已推送的客户）；region 区域分类
   const media = [
-    { id: "m_1", kind: "文章", category: "功能文章", title: "肠道菌群与情绪：脑肠轴揭秘", url: "https://mp.weixin.qq.com/s/example-brain-gut", desc: "科普脑肠轴如何双向影响情绪与消化，适合推给压力型便秘客户。", tags: ["脑肠轴", "情绪", "便秘"], pushedTo: [], createdAt: now - 90000000, region: "通用" },
-    { id: "m_2", kind: "文章", category: "功能文章", title: "21 天肠道调理食谱大全", url: "https://mp.weixin.qq.com/s/example-diet", desc: "高纤维食谱 + 发酵食物清单，干预期客户每日可参考。", tags: ["食谱", "膳食纤维"], pushedTo: [], createdAt: now - 80000000, region: "通用" },
+    { id: "m_1", kind: "图文文章", category: "功能文章", title: "肠道菌群与情绪：脑肠轴揭秘", url: "https://mp.weixin.qq.com/s/example-brain-gut", desc: "科普脑肠轴如何双向影响情绪与消化，适合推给压力型便秘客户。", tags: ["脑肠轴", "情绪", "便秘"], pushedTo: [], createdAt: now - 90000000, region: "通用" },
+    { id: "m_2", kind: "图文文章", category: "功能文章", title: "21 天肠道调理食谱大全", url: "https://mp.weixin.qq.com/s/example-diet", desc: "高纤维食谱 + 发酵食物清单，干预期客户每日可参考。", tags: ["食谱", "膳食纤维"], pushedTo: [], createdAt: now - 80000000, region: "通用" },
     { id: "m_3", kind: "知识", category: "健康知识", title: "益生菌正确服用指南", url: "https://mp.weixin.qq.com/s/example-probiotic", desc: "服用时间、水温、与抗生素间隔等注意事项，降低客户误操作。", tags: ["益生菌", "依从性"], pushedTo: ["c_1"], createdAt: now - 70000000, region: "通用" },
-    { id: "m_4", kind: "图片", category: "图片素材", title: "门店陈列海报·肠道年龄自测", url: "https://example.com/poster-gut-age.png", desc: "到店引流主视觉，扫码自测肠道年龄。", tags: ["门店", "海报", "引流"], pushedTo: [], createdAt: now - 60000000, region: "华南" },
-    { id: "m_5", kind: "图片", category: "图片素材", title: "菌群检测报告样例(脱敏)", url: "https://example.com/report-sample.png", desc: "给潜在客户看的脱敏样本，建立专业信任。", tags: ["检测", "样本"], pushedTo: [], createdAt: now - 55000000, region: "通用" },
+    { id: "m_4", kind: "图片海报", category: "图片素材", title: "门店陈列海报·肠道年龄自测", url: "https://example.com/poster-gut-age.png", desc: "到店引流主视觉，扫码自测肠道年龄。", tags: ["门店", "海报", "引流"], pushedTo: [], createdAt: now - 60000000, region: "华南" },
+    { id: "m_5", kind: "图片海报", category: "图片素材", title: "菌群检测报告样例(脱敏)", url: "https://example.com/report-sample.png", desc: "给潜在客户看的脱敏样本，建立专业信任。", tags: ["检测", "样本"], pushedTo: [], createdAt: now - 55000000, region: "通用" },
     { id: "m_6", kind: "视频", category: "视频素材", title: "乔本肠道管家·品牌介绍短片", url: "https://example.com/brand-intro.mp4", desc: "60s 品牌故事，适合朋友圈/社群首触。", tags: ["品牌", "介绍"], pushedTo: [], createdAt: now - 50000000, region: "全国" },
     { id: "m_7", kind: "视频", category: "视频素材", title: "客户真实案例：腹胀 8 周改善记录", url: "https://example.com/case-bloat.mp4", desc: "真实前后对比，转化利器，推给犹豫客户。", tags: ["案例", "转化"], pushedTo: ["c_2"], createdAt: now - 40000000, region: "华南" },
-    { id: "m_8", kind: "文章", category: "产品介绍", title: "乔本肠道管家服务包与权益", url: "https://mp.weixin.qq.com/s/example-package", desc: "三档会员权益说明，转化与复购用。", tags: ["服务包", "会员"], pushedTo: [], createdAt: now - 30000000, region: "通用" },
-    { id: "m_9", kind: "图文", category: "功能文章", title: "肠道健康 7 天打卡图文", url: "", content: "Day1 多喝温水\nDay2 增加膳食纤维\nDay3 补充益生菌\nDay4 规律作息\nDay5 减少精制糖\nDay6 适度运动\nDay7 复测打卡", desc: "可转发朋友圈/社群的 7 天打卡图文，提升依从。", tags: ["打卡", "依从"], pushedTo: [], createdAt: now - 20000000, region: "通用" },
-    { id: "m_10", kind: "海报", category: "品牌物料", title: "肠道年龄自测·分享海报", url: "https://example.com/poster-share.png", desc: "可下载转发朋友圈的分享海报。", tags: ["海报", "分享"], pushedTo: [], createdAt: now - 15000000, region: "华南" },
+    { id: "m_8", kind: "图文文章", category: "产品介绍", title: "乔本肠道管家服务包与权益", url: "https://mp.weixin.qq.com/s/example-package", desc: "三档会员权益说明，转化与复购用。", tags: ["服务包", "会员"], pushedTo: [], createdAt: now - 30000000, region: "通用" },
+    { id: "m_9", kind: "图文文章", category: "功能文章", title: "肠道健康 7 天打卡图文", url: "", content: "Day1 多喝温水\nDay2 增加膳食纤维\nDay3 补充益生菌\nDay4 规律作息\nDay5 减少精制糖\nDay6 适度运动\nDay7 复测打卡", desc: "可转发朋友圈/社群的 7 天打卡图文，提升依从。", tags: ["打卡", "依从"], pushedTo: [], createdAt: now - 20000000, region: "通用" },
+    { id: "m_10", kind: "图片海报", category: "品牌物料", title: "肠道年龄自测·分享海报", url: "https://example.com/poster-share.png", desc: "可下载转发朋友圈的分享海报。", tags: ["海报", "分享"], pushedTo: [], createdAt: now - 15000000, region: "华南" },
     { id: "m_11", kind: "活动方案", category: "活动", title: "肠道健康公益筛查活动方案", url: "https://example.com/activity-plan.pdf", desc: "社区公益筛查活动执行方案，含流程与分工。", tags: ["活动", "公益"], pushedTo: [], createdAt: now - 10000000, region: "华东" },
     { id: "m_12", kind: "案例图文", category: "案例", title: "客户案例：便秘 6 周改善图文", url: "", content: "客户 A，女，38 岁\n症状：长期便秘(2-3天/次)\n干预：益生菌+膳食纤维+饮食\n第 2 周：排便隔天一次\n第 6 周：每日规律，腹胀消失", desc: "前后对比案例图文，转化利器。", tags: ["案例", "转化"], pushedTo: [], createdAt: now - 5000000, region: "通用" },
   ];
@@ -828,7 +828,7 @@ app.post("/api/aiTasks/:id/autorun", (req, res) => {
       const m = find("media", a.linkedId); m.content = gen.result; m.desc = m.desc || a.title;
       mutate("media", "update", m, actor); feedback = { collection: "media", label: "媒体库素材" };
     } else {
-      const m = { id: "m_" + nanoid(8), kind: "图文", category: "AI生成", title: a.title || deriveTitle(a.prompt, "media"), content: gen.result, desc: a.title || "", tags: ["AI生成"], pushedTo: [], createdAt: Date.now() };
+      const m = { id: "m_" + nanoid(8), kind: "图文文章", category: "AI生成", title: a.title || deriveTitle(a.prompt, "media"), content: gen.result, desc: a.title || "", tags: ["AI生成"], pushedTo: [], createdAt: Date.now() };
       DB.media.push(m); mutate("media", "create", m, actor); feedback = { collection: "media", label: "媒体库素材（新建）" };
     }
   } else {
