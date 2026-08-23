@@ -1,11 +1,12 @@
-# Render 免费 PaaS 部署配置（Docker）
+# Render PaaS 部署配置（Docker）
 # 在 Render 新建 Web Service → Connect 本仓库 → 选 Docker → 上传/识别此文件
+# 注意：免费实例 (free) 不支持持久磁盘，需 starter 及以上才能挂载 disk
 services:
   - type: web
     name: qiaoben-shuguo-ai
     runtime: docker
     dockerfilePath: ./Dockerfile
-    plan: free
+    plan: starter
     healthCheckPath: /api/health
     envVars:
       - key: PORT
