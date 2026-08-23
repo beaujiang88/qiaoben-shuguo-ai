@@ -887,7 +887,8 @@ function renderMedia(main) {
       ${catNav}
       <div class="media-main">
         <div class="page-head"><div><h2>媒体库</h2><div class="sub">${mediaCatFilter === "全部素材" ? "全部素材" : esc(mediaCatFilter)} · ${list.length} 项</div></div>
-          <button class="btn btn-primary" onclick="openMediaForm()">＋ 新增素材</button></div>
+          <div class="row" style="gap:8px"><button class="btn" onclick="openSugooVideo()">🎬 AI 短视频</button>
+          <button class="btn btn-primary" onclick="openMediaForm()">＋ 新增素材</button></div></div>
         <div class="media-toolbar">
           <div class="media-toolbar-row"><span class="media-toolbar-label">区域</span>${regionTabs}</div>
         </div>
@@ -1843,11 +1844,15 @@ function renderResources(main) {
     <div class="row"><button class="btn btn-primary" onclick="openExpertForm()">＋ 专家</button>
     <button class="btn" onclick="openToolForm()">＋ 工具</button></div></div>
     <h3 style="margin:6px 0">🧑‍⚕️ 专家（点击选择关联到工具）</h3>
-    <div class="grid cols-3">${ex.map(e => `<div class="card" style="cursor:pointer" onclick="selectExpertForTool('${e.id}')">
-      <div class="row" style="gap:10px;align-items:center"><img src='mascot-head.png' class='mascot-img' style="background:${e.color}20"><b>${esc(e.name)}</b></div>
+    <div class="grid cols-3">${ex.map(e => {
+      const butlerCount = e.pipeline === "gut-butler" ? state.db.media.filter(m => m.butler).length : 0;
+      return `<div class="card" style="cursor:pointer" onclick="selectExpertForTool('${e.id}')">
+      <div class="row" style="gap:10px;align-items:center"><img src='mascot-head.png' class='mascot-img' style="background:${e.color}20"><b>${esc(e.name)}</b>${e.pipeline ? '<span class="chip green butler-chip">⚡ 自动干活中</span>' : ""}</div>
       <div class="chip brand" style="margin-top:8px">${esc(e.domain)}</div><div class="muted" style="margin-top:6px">${esc(e.desc)}</div>
-      <div class="muted" style="margin-top:8px;font-size:11.5px">点击将此专家关联到工具 →</div>
-      <button class="btn btn-sm btn-danger" style="margin-top:8px" onclick="event.stopPropagation();del('experts','${e.id}')">移除</button></div>`).join("") || "<div class='muted'>暂无专家，点击上方添加</div>"}</div>
+      ${e.pipeline === "gut-butler" ? `<div class="muted" style="margin-top:8px;font-size:12px">已累计产出 ${butlerCount} 篇文章素材（每日自动 +1）</div>
+        <button class="btn btn-sm btn-primary" style="margin-top:8px" onclick="event.stopPropagation();runGutButler()">▶ 立即产出素材</button>` : '<div class="muted" style="margin-top:8px;font-size:11.5px">点击将此专家关联到工具 →</div>'}
+      <button class="btn btn-sm btn-danger" style="margin-top:8px" onclick="event.stopPropagation();del('experts','${e.id}')">移除</button></div>`;
+    }).join("") || "<div class='muted'>暂无专家，点击上方添加</div>"}</div>
     <h3 style="margin:16px 0 6px">🧰 工具（已打通专家技能连接器）</h3>
     <div class="grid cols-3">${tl.map(t => {
       const ex = state.db.experts.find(e => e.id === t.expertId);
@@ -1917,15 +1922,82 @@ window.connectTool = async (id) => {
 };
 window.invokeTool = async (id) => {
   const t = state.db.tools.find(x => x.id === id);
+  if (t.pipeline === "gut-butler") return runGutButler();
+  if (t.pipeline === "sugoo-video") return openSugooVideo();
   const a = await api("POST", "/aiTasks", { title: "调用工具：" + t.name, prompt: `请使用【${t.name}】（专家技能：${t.skill || "—"}）完成任务：\n${t.desc || ""}`, linkedType: "task", linkedId: "", status: "待处理" });
   await runAITask(a.id);
   toast("已直通主对话，复制指令交给斜杠喵即可执行");
 };
+// ---------- 肠道管家：立即产出文章素材 ----------
+window.runGutButler = async () => {
+  toast("🦠 肠道管家正在检索肠道健康主题并改稿成乔本风格…");
+  try {
+    const r = await api("POST", "/ai/gut-butler/run");
+    const m = r.media || {};
+    openModal("🦠 肠道管家 · 文章素材已产出", `
+      <div class="row" style="gap:10px;align-items:center;margin-bottom:8px"><span class="chip green">✅ 已写入文章库</span><span class="chip">今日第 ${r.todayCount} 篇</span></div>
+      <b style="font-size:15px">${esc(m.title || "")}</b>
+      ${m.url ? `<img src="${esc(m.url)}" style="width:100%;border-radius:10px;margin:10px 0;border:1px solid var(--line)">` : ""}
+      <div class="doc-body" style="white-space:pre-wrap;max-height:40vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:12px;background:#fafbff;font-size:13px">${esc(m.content || "")}</div>
+      <div class="muted" style="margin-top:8px;font-size:12px">配图由 AI 自动生成（无版权风险）；发布前建议经「内容合规审核」专家把关。</div>
+      <div class="row" style="justify-content:flex-end;margin-top:12px">
+        <button class="btn btn-primary" onclick="closeModal();goto('media')">查看文章库 →</button>
+        <button class="btn" onclick="runGutButler();closeModal()">再产一篇</button>
+      </div>`);
+  } catch (e) { toast("产出失败：" + (e.message || "")); }
+};
+// ---------- AI 短视频生成：数果智能体小程序 / 数果网页版 ----------
+const SUGOO_MINI_LINK = "#小程序://数果AI/KtEnuE9yVBolSWu";
+const SUGOO_WEB_LINK = "https://sugoo.asia/zh";
+window.copySugooLink = async () => {
+  try { await navigator.clipboard.writeText(SUGOO_MINI_LINK); toast("已复制小程序链接，到微信任意聊天框粘贴即可打开"); }
+  catch { const ta = document.createElement("textarea"); ta.value = SUGOO_MINI_LINK; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); toast("已复制小程序链接，到微信任意聊天框粘贴即可打开"); }
+};
+window.openSugooVideo = () => {
+  openModal("🎬 AI 短视频生成", `
+    <div class="muted" style="margin-bottom:12px">用文章库素材一键生成短视频口播脚本与成片，两个入口任选：</div>
+    <div class="sv-grid">
+      <div class="card sv-card">
+        <div class="sv-ic">📱</div>
+        <b>数果智能体小程序</b>
+        <div class="muted" style="margin:6px 0;font-size:12.5px">微信内使用，体验完整 AI 能力</div>
+        <div class="sv-linkbox" onclick="copySugooLink()" title="点击复制">${esc(SUGOO_MINI_LINK)}</div>
+        <button class="btn btn-primary" style="margin-top:8px" onclick="copySugooLink()">📋 复制小程序链接</button>
+        <div class="muted" style="margin-top:8px;font-size:12px">复制后打开微信，粘贴到任意聊天框（或文件传输助手），点击即可进入小程序</div>
+      </div>
+      <div class="card sv-card">
+        <div class="sv-ic">🌐</div>
+        <b>数果网页版</b>
+        <div class="muted" style="margin:6px 0;font-size:12.5px">电脑浏览器直接使用</div>
+        <div class="sv-linkbox">${esc(SUGOO_WEB_LINK)}</div>
+        <button class="btn btn-primary" style="margin-top:8px" onclick="window.open('${SUGOO_WEB_LINK}','_blank')">🚀 打开网页版</button>
+        <div class="muted" style="margin-top:8px;font-size:12px">手机浏览器打开同样可用</div>
+      </div>
+    </div>
+    <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn" onclick="closeModal()">关闭</button></div>`);
+};
 
 function renderAIDesk(main) {
   const list = state.db.aiTasks.filter(a => matches(a, state.query));
+  const butlerArticles = state.db.media.filter(m => m.butler);
+  const butlerToday = butlerArticles.filter(m => m.butlerDate === new Date().toISOString().slice(0, 10)).length;
   main.innerHTML = `<div class="page-head"><div><h2>AI 任务台</h2><div class="sub">发起任务 → 交给斜杠喵（WorkBuddy 内置能力）→ 结果归档，并生成方案/进度</div></div>
     <button class="btn btn-primary" onclick="openAITaskForm()">＋ 发起 AI 任务</button></div>
+    <div class="sv-grid" style="margin-bottom:16px">
+      <div class="card sv-card sv-hero" style="cursor:pointer" onclick="openSugooVideo()">
+        <div class="sv-ic">🎬</div>
+        <div style="flex:1"><b>AI 短视频生成</b><div class="muted" style="font-size:12.5px;margin-top:4px">文章素材一键转短视频口播脚本与成片</div></div>
+        <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+          <button class="btn btn-sm" onclick="event.stopPropagation();copySugooLink()">📱 数果智能体小程序</button>
+          <button class="btn btn-sm" onclick="event.stopPropagation();window.open('${SUGOO_WEB_LINK}','_blank')">🌐 数果网页版</button>
+        </div>
+      </div>
+      <div class="card sv-card sv-hero">
+        <div class="sv-ic">🦠</div>
+        <div style="flex:1"><b>肠道管家 · 内容生产线</b><div class="muted" style="font-size:12.5px;margin-top:4px">全网检索 → AI 乔本风格改稿 → 自动配图 → 进文章库 · 今日 ${butlerToday} 篇 / 累计 ${butlerArticles.length} 篇</div></div>
+        <button class="btn btn-sm btn-primary" style="flex:none" onclick="runGutButler()">▶ 立即产出素材</button>
+      </div>
+    </div>
     ${list.map(a => `
       <div class="ai-task"><div class="row" style="justify-content:space-between"><b>${esc(a.title)}</b><span class="chip ${statusChip(a.status)}">${a.status}</span></div>
       <div class="muted" style="margin:6px 0">发起人 ${mName(a.createdBy)} · ${timeAgo(a.createdAt || Date.now())} ${a.linkedType ? `· 关联 ${a.linkedType}` : ""}</div>

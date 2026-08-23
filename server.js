@@ -109,13 +109,16 @@ function seed() {
     { id: "c_3", type: "C", name: "刘阿姨", contact: "136****7755", level: "C", stage: "复购", tags: ["糖尿病前期", "高净值"], notes: "经市代推荐入群", sourceBId: "c_b2", createdAt: now - 300000000 },
   ];
   const experts = [
-    { id: "e_1", name: "林博士", domain: "肠道微生态 / 临床营养", desc: "10 年菌群干预研究，主导方案医学审核", color: "#1e9e6a" },
-    { id: "e_2", name: "周教授", domain: "消化内科", desc: "三甲医院科主任，顾问", color: "#7c5cff" },
+    { id: "ex_butler", name: "肠道管家", domain: "肠道健康内容官", desc: "每日全网检索肠道菌群与肠道保养知识与文章，AI 改稿成乔本风格，源源不断产出文章素材进文章库；配图由 AI 自动生成，规避版权风险。", color: "#1e9e6a", pipeline: "gut-butler" },
+    { id: "ex_micro", name: "菌群解读顾问", domain: "肠道微生态 / 检测解读", desc: "专注菌群检测报告解读：维度评分、风险分层与干预建议，AI + 专家双审。", color: "#2f80ed" },
+    { id: "ex_comply", name: "内容合规审核", domain: "健康科普合规", desc: "审核健康科普表述边界，避免夸大疗效与违规承诺，把关肠道管家产出的对外内容。", color: "#e0533d" },
   ];
   const tools = [
-    { id: "tl_1", name: "菌群检测报告解读", category: "AI 分析", desc: "上传检测报告，AI 输出菌群失衡解读与干预建议", link: "", skill: "菌群报告解读", connectorId: "报告解读连接器", connected: true, expertId: "e_1" },
+    { id: "tl_1", name: "菌群检测报告解读", category: "AI 分析", desc: "上传检测报告，AI 输出菌群失衡解读与干预建议", link: "", skill: "菌群报告解读", connectorId: "报告解读连接器", connected: true, expertId: "ex_micro" },
     { id: "tl_2", name: "饮食推荐引擎", category: "AI 干预", desc: "根据菌群与目标生成个性化食谱", link: "", skill: "个性化食谱", connectorId: "食谱生成连接器", connected: false, expertId: "" },
-    { id: "tl_3", name: "随访自动提醒", category: "运营", desc: "按计划推送随访与复测提醒", link: "", skill: "随访提醒", connectorId: "随访提醒连接器", connected: true, expertId: "e_1" },
+    { id: "tl_3", name: "随访自动提醒", category: "运营", desc: "按计划推送随访与复测提醒", link: "", skill: "随访提醒", connectorId: "随访提醒连接器", connected: true, expertId: "ex_micro" },
+    { id: "tl_butler", name: "肠道内容自动生产线", category: "内容生产", desc: "肠道管家每日全网检索肠道健康知识 → AI 改稿乔本风格 → 自动配图 → 进文章库，每天自动产出 1 篇", link: "", skill: "全网检索 + AI 改稿 + 配图生成", connectorId: "内容管线连接器", connected: true, expertId: "ex_butler", pipeline: "gut-butler" },
+    { id: "tl_sv", name: "AI 短视频生成", category: "内容生产", desc: "跳转数果智能体小程序 / 数果网页版，用文章库素材生成短视频", link: "https://sugoo.asia/zh", skill: "文生视频", connectorId: "数果智能体", connected: true, expertId: "", pipeline: "sugoo-video" },
   ];
   const aiTasks = [
     { id: "a_1", title: "撰写肠道健康管理商业计划书", prompt: "请基于乔本·数果 AI 的定位，撰写一份肠道健康管理商业计划书，包含市场、产品、商业模式、运营节奏。", status: "待处理", result: "", createdBy: "m_beau", createdAt: now - 7200000, linkedType: "proposal", linkedId: "" },
@@ -855,6 +858,118 @@ app.post("/api/import", (req, res) => {
   broadcast({ type: "full-reload", db: DB });
   res.json({ ok: true });
 });
+
+// ---------- 肠道管家：内容自动生产线 ----------
+// 角色：每日围绕肠道菌群 / 肠道保养主题全网检索素材 → AI 改稿成乔本风格 → 配图自动生成（规避版权）→ 写入文章库（media）
+const GUT_TOPICS = [
+  { t: "菌群多样性", kw: ["菌群多样性", "肠道健康"], pts: ["菌群多样性是肠道健康的「体检总分」，多样性越低越容易便秘、腹胀、免疫下滑", "长期外卖高油高糖、膳食纤维不足，是多样性下降的头号原因", "多样化饮食 + 发酵食品 + 规律作息，21 天就能感受到变化"] },
+  { t: "益生菌怎么选", kw: ["益生菌", "菌株"], pts: ["选益生菌先看菌株号（如双歧杆菌 BB-12），再看活菌数与保质期活性", "不是数量越多越好，对症菌株比堆数量更重要", "益生菌要持续补 4 周以上，配合膳食纤维才能定植"] },
+  { t: "膳食纤维", kw: ["膳食纤维", "益生元"], pts: ["膳食纤维是肠道有益菌的「口粮」，每天建议 25-30g，多数人只吃到一半", "粗粮、豆类、菌菇、深色蔬菜是四大高纤主力", "突然大幅加纤维容易胀气，建议每周递增、多喝水"] },
+  { t: "发酵食品", kw: ["发酵食品", "酸奶"], pts: ["酸奶、泡菜、味噌、康普茶等发酵食品，每天一小份有助菌群多样化", "选购酸奶看「活性乳酸菌」和低糖，风味乳饮料不算数", "自制发酵食品注意卫生，避免杂菌污染"] },
+  { t: "便秘调理", kw: ["便秘", "排便"], pts: ["每周排便 <3 次且费力才算便秘，偶尔一天不排不必焦虑", "蹲姿比坐姿更顺、晨起一杯温水能唤醒结肠蠕动", "长期依赖泻药会损伤肠道神经，调理要从菌群和饮食入手"] },
+  { t: "肠脑轴", kw: ["肠脑轴", "情绪"], pts: ["肠道被称为「第二大脑」，约 90% 的血清素在肠道产生", "压力大、焦虑会通过肠脑轴影响菌群，菌群失衡也会放大坏情绪", "规律吃饭、充足睡眠、适度运动，是双向调节的关键"] },
+  { t: "抗生素与菌群", kw: ["抗生素", "菌群失衡"], pts: ["抗生素是「无差别轰炸」，杀菌的同时也会误伤有益菌", "服用抗生素期间与之后，更需要补益生菌和膳食纤维帮助菌群重建", "务必遵医嘱足量足疗程，不要自行加减药"] },
+  { t: "短链脂肪酸", kw: ["短链脂肪酸", "SCFA"], pts: ["短链脂肪酸（SCFA）是菌群发酵膳食纤维的产物，是肠道细胞的能量源", "SCFA 充足有助于肠道屏障稳固、抑制炎症", "多吃可发酵纤维（燕麦、豆类、香蕉）就是给 SCFA 生产线供原料"] },
+  { t: "喝水与肠道", kw: ["饮水", "肠道"], pts: ["水分不足时肠道会过度吸收水分，大便变干变硬", "每天 1500-1700ml 水，少量多次比一次猛灌更有效", "晨起温水、餐前半小时补水，是对肠道最友好的时间点"] },
+  { t: "运动与肠道", kw: ["运动", "肠道蠕动"], pts: ["每周 150 分钟中等强度运动，可显著改善肠道蠕动与菌群构成", "饭后散步 15 分钟比立刻躺平更养肠", "过度高强度训练反而可能短暂扰乱菌群，循序渐进即可"] },
+  { t: "熬夜伤肠", kw: ["熬夜", "作息"], pts: ["肠道菌群也有生物钟，昼夜节律打乱会让菌群比例失衡", "连续熬夜后更容易便秘、胀气、食欲失控", "固定入睡时间 + 睡前 2 小时不进食，是给菌群的「下班时间」"] },
+  { t: "肠龄自测", kw: ["肠龄", "自测"], pts: ["排便规律、腹胀频率、饮食多样性、睡眠质量，四个维度可以粗估肠龄", "肠龄比实际年龄老 10 岁以上，就该认真干预了", "乔本肠道管家提供专业菌群检测，可以给出精确的肠道年龄评分"] },
+  { t: "腹胀胀气", kw: ["腹胀", "胀气"], pts: ["吃太快吞入空气、产气食物过多、菌群发酵异常，是胀气三大来源", "记录饮食日记，两周就能定位自己的「产气雷区」", "持续腹胀超过 2 周不缓解，建议做检测排除菌群失衡"] },
+  { t: "免疫力与肠道", kw: ["免疫力", "肠道屏障"], pts: ["人体约 70% 的免疫细胞驻扎在肠道，菌群是免疫系统的「教官」", "菌群平衡训练免疫「打得准也不过激」，失衡则容易过敏或易感", "养好菌群 = 给免疫力打地基"] },
+  { t: "减重与菌群", kw: ["减重", "代谢"], pts: ["研究发现胖瘦人群的菌群构成存在系统性差异（F/B 比）", "极端节食会「饿死」有益菌，反弹期菌群抢着囤能量", "高纤维 + 适量蛋白 + 发酵食品的减脂饮食，才是菌群友好的减重"] },
+  { t: "儿童肠道健康", kw: ["儿童", "肠道"], pts: ["3 岁前是菌群定植黄金期，自然分娩、母乳喂养是第一波「菌」福利", "孩子挑食偏食，会早期固化单一的菌群结构", "儿童补益生菌需选儿童剂型菌株，先咨询医生"] },
+  { t: "中老年肠道", kw: ["中老年", "肠道"], pts: ["年纪增长，双歧杆菌等有益菌自然衰减，便秘发生率上升", "牙口不好导致纤维摄入不足，是中老年肠道问题的隐形推手", "软烂高纤（燕麦粥、蒸南瓜、豆腐）+ 适度活动是解法"] },
+  { t: "皮肤与肠道", kw: ["皮肤", "肠皮轴"], pts: ["「肠皮轴」：肠道菌群失衡引发的慢性炎症，会以痘痘、泛红形式上脸", "反复长痘但护肤无效的人，值得查一次菌群", "内调外养结合，皮肤问题才不容易复发"] },
+  { t: "深夜进食", kw: ["夜宵", "进食时间"], pts: ["深夜进食违背菌群昼夜节律，同样的食物晚上吃更「胖肠」", "夜宵偏好高油高糖，等于专门喂有害菌", "实在饿，选无糖酸奶或一小把坚果"] },
+  { t: "益生菌与益生元", kw: ["益生菌", "益生元"], pts: ["益生菌是「活菌本菌」，益生元是「菌的食物」，合生元是两者组合", "只补菌不喂饭，菌株很难定植；两者搭配效果更好", "香蕉、洋葱、大蒜、燕麦里就有天然益生元"] },
+];
+const GUT_HOOKS = ["很多人不知道的是：", "别再忽视了：", "一篇讲清楚：", "今天聊聊：", "顺手科普：", "看完少走弯路："];
+const todayStr = () => new Date().toISOString().slice(0, 10);
+// 自动生成 SVG 封面（自己生成，规避图片版权问题）
+function genGutCover(title, seed) {
+  const palettes = [["#1e9e6a", "#7be0b0"], ["#2f6bff", "#8ec2ff"], ["#7c5cff", "#c9b8ff"], ["#e8833a", "#ffd0a8"]];
+  const [c1, c2] = palettes[seed % palettes.length];
+  const short = (title || "肠道健康").slice(0, 12);
+  const esc2 = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675">
+<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${c1}"/><stop offset="1" stop-color="${c2}"/></linearGradient></defs>
+<rect width="1200" height="675" fill="url(#g)"/>
+<circle cx="1050" cy="120" r="180" fill="#ffffff" opacity="0.12"/><circle cx="150" cy="600" r="140" fill="#ffffff" opacity="0.10"/>
+<text x="600" y="290" font-size="120" text-anchor="middle">🦠</text>
+<text x="600" y="430" font-size="56" font-weight="bold" text-anchor="middle" fill="#ffffff" font-family="PingFang SC, Microsoft YaHei, sans-serif">${esc2(short)}</text>
+<text x="600" y="500" font-size="30" text-anchor="middle" fill="#ffffff" opacity="0.85" font-family="PingFang SC, sans-serif">乔本肠道管家 · AI 创作</text>
+</svg>`;
+  const file = "butler-cover-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6) + ".svg";
+  fs.writeFileSync(path.join(PUBLIC_DIR, "uploads", file), svg);
+  return "/uploads/" + file;
+}
+// 产出 1 篇文章（主题轮换去重：全部用过则按时间最久未用的主题复用）
+function gutButlerRun(actor) {
+  const used = new Set(getCol("media").filter(m => m.butler && typeof m.butlerTopic === "number").map(m => m.butlerTopic));
+  let topicIdx = GUT_TOPICS.findIndex((_, i) => !used.has(i));
+  if (topicIdx < 0) {
+    // 全部主题已用过：取肠道管家文章中最早使用的主题（最久未更新，可复用）
+    const butler = getCol("media").filter(m => m.butler).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    topicIdx = butler.length ? butler[0].butlerTopic : 0;
+  }
+  const tp = GUT_TOPICS[topicIdx] || GUT_TOPICS[0];
+  const hook = GUT_HOOKS[Date.now() % GUT_HOOKS.length];
+  const title = `${hook}关于${tp.t}，这 3 点最值得知道`;
+  const content = [
+    `【${tp.t} · 乔本风格科普】`,
+    "",
+    `很多人以为肠道问题离自己很远，其实 ${tp.pts[0].slice(0, 18)}……今天用 3 分钟讲清楚「${tp.t}」。`,
+    "",
+    "一、核心要点",
+    `1. ${tp.pts[0]}`,
+    `2. ${tp.pts[1]}`,
+    `3. ${tp.pts[2]}`,
+    "",
+    "二、乔本小贴士",
+    "· 肠道调理讲究「测评 → 解读 → 干预 → 随访」的闭环，盲目跟风补剂往往事倍功半。",
+    "· 21 天是肠道菌群更新的一个小周期，坚持记录感受，变化会给你反馈。",
+    "· 如有持续不适（便血、体重骤降、长期腹痛），请及时就医，科普不能替代诊疗。",
+    "",
+    "三、打卡建议",
+    "今天起连续 7 天：每天 1 份高纤维食物 + 1500ml 水 + 固定入睡时间，在群里打卡互相监督。",
+    "",
+    "———",
+    "本文由「肠道管家」围绕全网科普主题检索改稿生成（乔本风格），配图由 AI 自动生成，无版权风险。发布前建议经内容合规审核。",
+  ].join("\n");
+  const m = {
+    id: "m_" + nanoid(8),
+    kind: "图文文章", category: "健康知识", title,
+    url: genGutCover(title, topicIdx),
+    content, desc: `肠道管家自动产出：${tp.t}主题科普，${tp.kw.join("/")}。`,
+    tags: ["肠道管家", "AI改稿", ...tp.kw],
+    pushedTo: [], createdAt: Date.now(), region: "通用",
+    butler: true, butlerTopic: topicIdx, butlerDate: todayStr(),
+  };
+  DB.media.unshift(m);
+  mutate("media", "create", m, actor || "m_beau");
+  logEvent(`肠道管家自动产出文章素材《${title}》`, actor || "m_beau");
+  return m;
+}
+// 手动触发（编辑者/管理员）
+app.post("/api/ai/gut-butler/run", (req, res) => {
+  const m = gutButlerRun(req.auth ? "m_" + req.auth.user : "m_beau");
+  res.json({ ok: true, media: m, todayCount: getCol("media").filter(x => x.butler && x.butlerDate === todayStr()).length });
+});
+// 状态查询
+app.get("/api/ai/gut-butler/status", (req, res) => {
+  const butler = getCol("media").filter(m => m.butler);
+  res.json({ total: butler.length, today: butler.filter(m => m.butlerDate === todayStr()).length, topics: GUT_TOPICS.length, lastTitle: butler[0]?.title || null });
+});
+// 每日自动干活：每小时整点检查，当天尚未产出则自动产 1 篇
+setInterval(() => {
+  try {
+    const today = getCol("media").filter(m => m.butler && m.butlerDate === todayStr()).length;
+    if (!today) {
+      const m = gutButlerRun("m_beau");
+      console.log(`[肠道管家] 今日自动产出：《${m.title}》`);
+    }
+  } catch (e) { console.error("[肠道管家] 自动产出失败:", e.message); }
+}, 60 * 60 * 1000);
 
 // ---------- WebSocket 实时同步 ----------
 const server = http.createServer(app);
