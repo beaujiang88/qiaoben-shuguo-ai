@@ -438,7 +438,17 @@ function render() {
   const r = state.route;
   const main = $("#main");
   const fns = { overview: renderOverview, planexec: renderPlanExec, proposals: renderProposals, feedback: renderFeedback, customers: renderCustomers, media: renderMedia, team: renderTeam, collab: renderCollab, resources: renderResources, aidesk: renderAIDesk, docs: renderDocs, activity: renderActivity };
-  (fns[r] || renderOverview)(main);
+  try {
+    (fns[r] || renderOverview)(main);
+  } catch (e) {
+    console.error(`模块 ${r} 渲染出错：`, e);
+    main.innerHTML = `<div class='empty' style='padding:40px'>
+      <div style='font-size:40px;margin-bottom:10px'>⚠️</div>
+      <b>「${esc(r)}」模块渲染出错</b>
+      <div class='muted' style='margin-top:6px;word-break:break-all'>${esc(String(e && e.message || e))}</div>
+      <button class='btn btn-primary' style='margin-top:12px' onclick='location.reload()'>刷新重试</button>
+    </div>`;
+  }
   applyReadonly();
 }
 
@@ -1879,7 +1889,7 @@ function computeBadges(memberId) {
   return { totalMin, totalScore, passed, courseCount, composite, tier, earned };
 }
 function renderBadgeWall(memberId) {
-  const { totalMin, totalScore, passed, courseCount, tier, earned } = computeBadges(memberId);
+  const { totalMin, totalScore, passed, courseCount, composite, tier, earned } = computeBadges(memberId);
   const m = state.db.members.find(x => x.id === memberId);
   return `<div class="card" style="margin-bottom:16px;background:linear-gradient(135deg,#fafbff,#f5f0ff);border-color:${tier.color}40">
     <div class="row" style="align-items:center;gap:12px;margin-bottom:10px">
