@@ -14,18 +14,19 @@
       <div class="login-title">乔本·数果 AI 工作台</div>
       <div id="loginTip" class="login-tip">输入名字与密码登录：成员用「任意名字 + 团队共享密码」（默认只读，需审批）；管理员用「管理员账号 + 管理员密码」直接获权。</div>
       <div class="field">
-        <input id="joinName" class="login-input" placeholder="你的名字（如：beau）" autocomplete="username"
+        <input id="joinName" class="login-input" placeholder="你的名字（如：beau）" autocomplete="username" oninput="setLoginErr('')"
           onkeydown="if(event.key==='Enter')doJoin()" />
       </div>
       <div class="field">
-        <input id="joinDisplay" class="login-input" placeholder="显示名（可选，如：林博士）" autocomplete="nickname"
+        <input id="joinDisplay" class="login-input" placeholder="显示名（可选，如：林博士）" autocomplete="nickname" oninput="setLoginErr('')"
           onkeydown="if(event.key==='Enter')doJoin()" />
       </div>
       <div class="field">
-        <input id="joinPw" class="login-input" type="password" placeholder="登录密码" autocomplete="current-password"
+        <input id="joinPw" class="login-input" type="password" placeholder="登录密码" autocomplete="current-password" oninput="setLoginErr('')"
           onkeydown="if(event.key==='Enter')doJoin()" />
       </div>
       <button class="btn btn-primary login-btn" onclick="doJoin()">登录 / 进入</button>
+      <div id="loginErr" class="login-err hidden"></div>
       <div class="login-note">成员：任意名字 + 团队共享密码登录，默认只读，在右上角「✏️ 改名」提交申请后由管理员审批解锁。管理员：使用管理员账号 + 管理员密码，直接获得全部操作权限，无需审批。</div>
     </div>
   </div>
@@ -73,6 +74,9 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
+
+  <!-- 媒体库预览灯箱 -->
+  <div id="lightbox" class="lightbox hidden"></div>
 
   <!-- AI 协助弹窗（独立于主弹窗，生成结果回填到表单） -->
   <div id="aiModal" class="modal hidden" style="z-index:60">

@@ -133,7 +133,7 @@ cat > ~/Library/LaunchAgents/com.qiaoben.server.plist <<'EOF'
 </plist>
 EOF
 
-launchctl load ~/Library/LaunchAgents/com.qiaoben.server.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.qiaoben.server.plist
 ```
 
 ### 4.2 cloudflared 常驻（命名隧道模式）
@@ -164,7 +164,7 @@ cat > ~/Library/LaunchAgents/com.qiaoben.tunnel.plist <<'EOF'
 </plist>
 EOF
 
-launchctl load ~/Library/LaunchAgents/com.qiaoben.tunnel.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.qiaoben.tunnel.plist
 ```
 
 > 快速隧道模式（`--url`）不适合 launchd 常驻，建议用命名隧道再走 4.2。

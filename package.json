@@ -8,8 +8,10 @@
     "start": "node server.js"
   },
   "dependencies": {
+    "dotenv": "^17.4.2",
     "express": "^4.19.2",
-    "ws": "^8.18.0",
-    "nanoid": "^5.0.7"
+    "multer": "^2.2.0",
+    "nanoid": "^5.0.7",
+    "ws": "^8.18.0"
   }
 }

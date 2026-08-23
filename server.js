@@ -1,5 +1,6 @@
 // 乔本·数果 AI 肠道健康管理项目 — 后端服务
 // Node + Express + ws；JSON 文件做共享数据库；WebSocket 做实时多人同步
+import "dotenv/config"; // 从 .env 加载环境变量（已被 .gitignore 忽略，不入库）
 import express from "express";
 import crypto from "crypto";
 import { WebSocketServer } from "ws";
@@ -8,6 +9,7 @@ import http from "http";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import multer from "multer";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, "data", "db.json");
@@ -271,16 +273,38 @@ app.use(express.json({ limit: "5mb" }));
 app.use("/api", (req, res, next) => { console.log(`[REQ] ${req.method} ${req.path}`); next(); });
 app.use(express.static(PUBLIC_DIR));
 
+// 文件上传（图片/视频/文档），存入 public/uploads，通过 /uploads/xxx 访问
+fs.mkdirSync(path.join(PUBLIC_DIR, "uploads"), { recursive: true });
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, path.join(PUBLIC_DIR, "uploads")),
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname) || "";
+      cb(null, Date.now() + "-" + Math.random().toString(36).slice(2, 8) + ext);
+    },
+  }),
+  limits: { fileSize: 50 * 1024 * 1024 },
+});
+app.post("/api/upload", upload.single("file"), (req, res) => {
+  const auth = req.headers["authorization"] || "";
+  const tok = auth.startsWith("Bearer ") ? auth.slice(7) : null;
+  const payload = verifyToken(tok);
+  if (!payload || !["editor", "admin"].includes(payload.role)) return res.status(403).json({ error: "仅协作者/管理员可上传" });
+  if (!req.file) return res.status(400).json({ error: "未收到文件" });
+  res.json({ url: "/uploads/" + req.file.filename, name: req.file.originalname, size: req.file.size });
+});
+
 // 健康检查（公开，供 PaaS/容器探活）
 app.get("/api/health", (req, res) => res.json({ ok: true, ts: Date.now() }));
 
 // ---------- 访问控制（注册 + 申请 → 审批） ----------
 // 管理员列表：初始管理员可通过环境变量覆盖
 const ADMIN_USERS = (process.env.ADMIN_USERS || "beau").split(",").map(s => s.trim()).filter(Boolean);
-const AUTH_SECRET = process.env.AUTH_SECRET || "qiaoben-shuguo-ai-secret-2026";
-// 登录密码（可用环境变量覆盖；部署时建议覆盖默认弱密码）
-const MEMBER_PASSWORD = process.env.MEMBER_PASSWORD || "qbsh2026@";
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "3612047Beau";
+const AUTH_SECRET = process.env.AUTH_SECRET || "CHANGE_THIS_AUTH_SECRET_IN_PROD";
+// 登录密码：必须由环境变量提供（部署时设置 MEMBER_PASSWORD / ADMIN_PASSWORD）。
+// 以下仅为占位符，避免 Public 仓库泄露可用密码；未配置环境变量时登录一律失败。
+const MEMBER_PASSWORD = process.env.MEMBER_PASSWORD || "CHANGE_MEMBER_PASSWORD";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "CHANGE_ADMIN_PASSWORD";
 const TOKEN_TTL = 1000 * 60 * 60 * 24 * 7; // 7 天
 
 function makeToken(user, role) {

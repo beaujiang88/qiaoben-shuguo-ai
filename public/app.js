@@ -198,6 +198,22 @@ function openModal(title, bodyHTML) {
 function closeModal() { $("#modal").classList.add("hidden"); }
 $("#modalClose").onclick = closeModal;
 
+// 通用删除（所有模块的「删除/移除/删」按钮统一走这里）
+//  - 成员移除：仅管理员
+//  - 其它集合：需 editor/admin（客户端先拦，服务端硬拦）
+window.del = async (col, id) => {
+  if (!id) return;
+  const label = { members: "成员", plans: "计划", proposals: "方案", tasks: "任务", feedback: "反馈", customers: "客户", media: "素材", experts: "专家", tools: "工具", aiTasks: "AI任务", docs: "课程" }[col] || "条目";
+  if (col === "members" && state.role !== "admin") { toast("仅管理员可移除成员"); return; }
+  if (!state.canEdit) { toast("无修改权限：请先申请并获得编辑权限"); return; }
+  if (!confirm(`确定删除该${label}？此操作不可撤销。`)) return;
+  try {
+    await api("DELETE", `/${col}/${id}`);
+    toast(`已删除${label}`);
+    render();
+  } catch (e) { toast("删除失败：" + (e.message || e)); }
+};
+
 // 通用字段表单：fields=[{key,label,type:'text'|'textarea'|'select'|'date'|'number'|'tags',options:[{v,l}],placeholder}]
 function formHTML(fields, values = {}) {
   return fields.map(f => {
@@ -526,35 +542,83 @@ window.aiWriteProposal = () => {
 };
 
 // ---------- 媒体库 ----------
+function mediaThumb(m) {
+  const u = m.url || "";
+  const isImg = /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(u) || m.kind === "图片";
+  const isVid = /\.(mp4|webm|ogg|mov)$/i.test(u) || m.kind === "视频";
+  if (isImg && u) return `<img src='${esc(u)}' alt='' loading='lazy'>`;
+  if (isVid && u) return `<video src='${esc(u)}' muted preload='metadata'></video>`;
+  return `<div class='media-thumb-icon'>${MEDIA_ICON[m.kind] || "📁"}</div>`;
+}
+function mediaCard(m) {
+  const pushed = m.pushedTo || [];
+  return `<div class='card media-card' onclick='previewMedia("${m.id}")'>
+    <div class='media-thumb'>${mediaThumb(m)}</div>
+    <div class='row' style='justify-content:space-between;margin-top:8px'><span class='chip brand'>${MEDIA_ICON[m.kind] || "📁"} ${esc(m.kind)}</span><span class='chip'>${esc(m.region || "通用")}</span></div>
+    <h3 style='margin:6px 0 4px;font-size:15px'>${esc(m.title)}</h3>
+    <div class='muted' style='font-size:13px;flex:1'>${esc(m.desc || "")}</div>
+    <div style='margin:8px 0'>${(m.tags || []).slice(0, 4).map(t => `<span class='chip'>${esc(t)}</span>`).join("") || ""}</div>
+    <div class='row' style='gap:6px;flex-wrap:wrap;margin-top:auto'>
+      <button class='btn btn-sm btn-primary' onclick='event.stopPropagation();openForwardModal("${m.id}")'>↗ 转发</button>
+      <button class='btn btn-sm' onclick='event.stopPropagation();openMediaForm("${m.id}")'>编辑</button>
+      <button class='btn btn-sm btn-danger' onclick='event.stopPropagation();del("media","${m.id}")'>删</button>
+    </div>
+    <div class='meta' style='margin-top:6px'>已推送 ${pushed.length} 个客户</div>
+  </div>`;
+}
 function renderMedia(main) {
   const allList = state.db.media.filter(m => matches(m, state.query));
   const list = mediaRegionTab === "全部区域" ? allList : allList.filter(m => (m.region || "通用") === mediaRegionTab);
   const counts = MEDIA_KINDS.map(k => `${MEDIA_ICON[k]} ${list.filter(m => m.kind === k).length}`).join(" &nbsp; ");
-  const regionCounts = MEDIA_REGIONS.slice(1).map(r => `${r}(${allList.filter(m=>(m.region||"通用")===r).length})`).join(" / ");
+  const regionCounts = MEDIA_REGIONS.slice(1).map(r => `${r}(${allList.filter(m => (m.region || "通用") === r).length})`).join(" / ");
   const regionTabs = `<div class="row" style="gap:6px;flex-wrap:wrap;margin:10px 0">${MEDIA_REGIONS.map(r =>
     `<button class="btn btn-sm ${mediaRegionTab === r ? "btn-primary" : ""}" onclick="setMediaRegion('${r}')">${r}</button>`).join("")}</div>`;
-  main.innerHTML = `<div class='page-head'><div><h2>媒体库</h2><div class='sub'>图文 / 文章 / 海报 / 视频 / 执行文档 / 活动方案 / 案例图文，按区域分类管理与推送客户</div></div>
+  // 按 category 分区块
+  const cats = [];
+  list.forEach(m => { const c = m.category || "未分类"; if (!cats.includes(c)) cats.push(c); });
+  const ordered = [...MEDIA_KINDS.filter(c => cats.includes(c)), ...cats.filter(c => !MEDIA_KINDS.includes(c))];
+  const blocks = ordered.map(cat => {
+    const items = list.filter(m => (m.category || "未分类") === cat);
+    if (!items.length) return "";
+    return `<div class="media-block"><div class="media-block-head"><span>${esc(cat)}</span><span class="muted">${items.length} 项</span></div><div class="grid cols-3">${items.map(mediaCard).join("")}</div></div>`;
+  }).join("") || "<div class='empty'>暂无素材，点右上角新增</div>";
+  main.innerHTML = `<div class='page-head'><div><h2>媒体库</h2><div class='sub'>图文 / 文章 / 海报 / 视频 / 执行文档 / 活动方案 / 案例图文，按分类区块管理，点击卡片即可预览</div></div>
     <button class='btn btn-primary' onclick='openMediaForm()'>＋ 新增素材</button></div>
     <div class='muted' style='margin-bottom:4px'>共 ${list.length} 项 · ${counts} · 区域分布：${regionCounts}</div>
     ${regionTabs}
-    <div class='grid cols-3'>${list.map(m => {
-      const pushed = m.pushedTo || [];
-      const isText = m.kind === "图文";
-      return `<div class='card' style='display:flex;flex-direction:column'>
-        <div class='row' style='justify-content:space-between'><span class='chip brand'>${MEDIA_ICON[m.kind] || "📁"} ${esc(m.kind)}</span><span class='row' style='gap:4px'><span class='chip orange'>${esc(m.region || "通用")}</span><span class='chip'>${esc(m.category || "")}</span></span></div>
-        <h3 style='margin:8px 0 4px'>${esc(m.title)}</h3>
-        <div class='muted' style='font-size:13px;flex:1'>${esc(m.desc || "")}</div>
-        ${isText && m.content ? `<div class='doc-body' style='max-height:90px;overflow:auto;margin:6px 0;font-size:12px'>${esc(m.content)}</div>` : ""}
-        <div style='margin:8px 0'>${(m.tags || []).map(t => `<span class='chip'>${esc(t)}</span>`).join("") || ""}</div>
-        <div class='row' style='gap:6px;align-items:center;flex-wrap:wrap'>
-          ${m.url ? `<a class='btn btn-sm' href='${esc(m.url)}' target='_blank' rel='noopener' download>⬇️ 下载</a>` : (isText ? `<button class='btn btn-sm' onclick='openTextMedia("${m.id}")'>📖 查看图文</button>` : "")}
-          <button class='btn btn-sm btn-primary' onclick='openForwardModal("${m.id}")'>↗ 转发</button></div>
-        <div class='meta' style='margin-top:6px'>已推送 ${pushed.length} 个客户 ${pushed.length ? "· " + pushed.map(c => cName(c)).slice(0, 3).join("、") + (pushed.length > 3 ? " 等" : "") : ""}</div>
-        <div class='row' style='margin-top:8px;justify-content:flex-end'><button class='btn btn-sm' onclick='openMediaForm("${m.id}")'>编辑</button>
-          <button class='btn btn-sm btn-danger' onclick='del("media","${m.id}")'>删</button></div>
-      </div>`;
-    }).join("") || "<div class='empty'>暂无素材，点右上角新增</div>"}</div>`;
+    <div class="media-blocks">${blocks}</div>`;
 }
+window.previewMedia = (id) => {
+  const m = state.db.media.find(x => x.id === id); if (!m) return;
+  const u = m.url || "";
+  const isImg = /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(u) || m.kind === "图片";
+  const isVid = /\.(mp4|webm|ogg|mov)$/i.test(u) || m.kind === "视频";
+  let body = "";
+  if (isImg && u) body = `<img class='lb-img' src='${esc(u)}'>`;
+  else if (isVid && u) body = `<video class='lb-video' src='${esc(u)}' controls autoplay></video>`;
+  else if (u && u.startsWith("/uploads/")) {
+    if (/\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(u)) body = `<img class='lb-img' src='${esc(u)}'>`;
+    else if (/\.(mp4|webm|ogg|mov)$/i.test(u)) body = `<video class='lb-video' src='${esc(u)}' controls autoplay></video>`;
+    else body = `<div class='lb-file'><div style='font-size:60px'>📄</div><a class='btn btn-primary' href='${esc(u)}' target='_blank' download>⬇️ 下载文件</a></div>`;
+  }
+  else if (m.kind === "图文" && m.content) body = `<div class='doc-body' style='white-space:pre-wrap;max-height:60vh;overflow:auto'>${esc(m.content)}</div>`;
+  else if (u) body = `<div class='lb-link'><p class='muted'>外部链接</p><a class='btn btn-primary' href='${esc(u)}' target='_blank' rel='noopener'>🔗 打开链接</a></div>`;
+  else body = `<div class='muted'>该素材暂无可预览内容</div>`;
+  const lb = $("#lightbox");
+  lb.innerHTML = `<div class='lb-backdrop' onclick='closeLightbox()'></div>
+    <div class='lb-panel'>
+      <div class='lb-head'><span>${esc(m.category || "")}</span><button class='x' onclick='closeLightbox()'>✕</button></div>
+      <div class='lb-body'>${body}</div>
+      <div class='lb-meta'>${MEDIA_ICON[m.kind] || "📁"} <b>${esc(m.title)}</b> · ${esc(m.kind)} · ${esc(m.region || "通用")}${m.desc ? " · " + esc(m.desc) : ""}</div>
+      <div class='row' style='gap:6px;justify-content:flex-end;margin-top:8px'>
+        ${u ? `<a class='btn btn-sm' href='${esc(u)}' target='_blank' rel='noopener'>🔗 打开原链接</a>` : ""}
+        <button class='btn btn-sm' onclick='closeLightbox();openForwardModal("${m.id}")'>↗ 转发</button>
+        <button class='btn btn-sm' onclick='closeLightbox();openMediaForm("${m.id}")'>编辑</button>
+      </div>
+    </div>`;
+  lb.classList.remove("hidden");
+};
+window.closeLightbox = () => { const lb = $("#lightbox"); if (lb) { lb.classList.add("hidden"); lb.innerHTML = ""; } };
 window.openTextMedia = (id) => {
   const m = state.db.media.find(x => x.id === id); if (!m) return;
   openModal("图文 · " + m.title, `<div class='muted' style='margin-bottom:8px'>${esc(m.desc || "")}</div><div class='doc-body' style='white-space:pre-wrap;max-height:60vh;overflow:auto'>${esc(m.content || "")}</div>
@@ -567,12 +631,27 @@ window.openMediaForm = (id) => {
     { key: "kind", label: "类型", type: "select", options: MEDIA_KINDS.map(k => ({ v: k, l: k })) },
     { key: "region", label: "区域分类", type: "select", options: MEDIA_REGIONS.slice(1).map(r => ({ v: r, l: r })) },
     { key: "category", label: "分类", placeholder: "如：功能文章 / 健康知识 / 品牌物料" },
-    { key: "url", label: "下载/外链地址", placeholder: "https://...（图文类型可留空）" },
+    { key: "url", label: "下载/外链地址", placeholder: "https://... 或下方上传本地文件" },
     { key: "content", label: "图文内容（图文类型填此）", type: "textarea", placeholder: "图文正文，支持多段文字，转发时一并带出" },
     { key: "desc", label: "说明", type: "textarea" },
     { key: "tags", label: "标签", type: "tags" },
   ], m));
   $("#modalBody").insertAdjacentHTML("afterbegin", aiBtn("media", "content", { titleField: "title", hint: "让 AI 帮你生成图文/文案/视频脚本等素材内容。" }));
+  // 上传本地文件
+  $("#modalBody").insertAdjacentHTML("beforeend", `<div class="field" style="margin-top:10px"><label>或上传本地文件（图片 / 视频 / 文档，≤50MB）</label><input id="mediaFile" type="file"><div class="row" style="margin-top:6px"><button class="btn btn-sm" id="uploadBtn" type="button">⬆️ 上传并填入地址</button><span id="uploadHint" class="muted" style="font-size:12px"></span></div></div>`);
+  $("#uploadBtn").onclick = async () => {
+    const f = $("#mediaFile").files[0]; if (!f) return toast("请先选择文件");
+    const fd2 = new FormData(); fd2.append("file", f);
+    $("#uploadHint").textContent = "上传中…";
+    try {
+      const r = await fetch("/api/upload", { method: "POST", headers: { "Authorization": "Bearer " + state.token }, body: fd2 });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "上传失败");
+      const urlEl = $('[name="url"]'); if (urlEl) urlEl.value = d.url;
+      $("#uploadHint").textContent = "已上传：" + (d.name || d.url);
+      toast("上传成功");
+    } catch (e) { $("#uploadHint").textContent = ""; toast("上传失败：" + e.message); }
+  };
   $("#formSubmit").onclick = async () => {
     const fd = readForm(); if (!fd.title) return toast("请填标题");
     id ? await api("PUT", `/media/${id}`, fd) : await api("POST", "/media", fd);
@@ -969,7 +1048,7 @@ function renderTeam(main) {
             <textarea id="chatInput" placeholder="输入消息…（支持 @任务 / AI 协助）" rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}"></textarea>
             <div class="chat-actions">
               <button class="btn btn-sm" title="引用任务" onclick="chatInsertTask()">📌 任务</button>
-              <button class="btn btn-sm" title="AI 协助写消息" onclick="chatAssistChat()">🤖 AI</button>
+              <button class="btn btn-sm" title="AI 协助写消息" onclick="chatAIAssist()">🤖 AI</button>
               <button class="btn btn-primary btn-sm" onclick="sendChat()">发送</button>
             </div>
           </div>
@@ -1431,6 +1510,23 @@ function renderDocs(main) {
     <div class="grid cols-2" style="margin-bottom:16px">${cards}</div>
     <div class="card"><h3>🏆 学习排行榜（按累计时长）</h3>${leaderboard}</div>`;
 }
+window.openDocForm = (id) => {
+  const d = id ? state.db.docs.find(x => x.id === id) : {};
+  openModal(id ? "编辑课程" : "新建课程", formHTML([
+    { key: "title", label: "标题" },
+    { key: "category", label: "分类", type: "select", options: ["总纲", ...LEARN_CATS].map(c => ({ v: c, l: c })) },
+    { key: "type", label: "类型", type: "select", options: [{ v: "lesson", l: "课程" }, { v: "doc", l: "文档" }] },
+    { key: "duration", label: "时长(分钟)", type: "number" },
+    { key: "body", label: "正文", type: "textarea", placeholder: "课程内容正文（支持多段）" },
+  ], d));
+  $("#modalBody").insertAdjacentHTML("afterbegin", aiBtn("doc", "body", { titleField: "title", hint: "让 AI 帮你生成课程/知识库内容。" }));
+  $("#formSubmit").onclick = async () => {
+    const fd = readForm(); if (!fd.title) return toast("请填标题");
+    if (fd.duration) fd.duration = Number(fd.duration) || 0;
+    id ? await api("PUT", `/docs/${id}`, fd) : await api("POST", "/docs", fd);
+    closeModal(); toast("已保存");
+  };
+};
 window.openStudy = async (id) => {
   const d = state.db.docs.find(x => x.id === id);
   openModal("学习：" + d.title, `<p class="muted">课程时长 ${d.duration || 0} 分钟。记录你本次学习用时（可累加）。</p>
@@ -1575,19 +1671,29 @@ function showLogin(msg) {
   setTimeout(() => { const el = $("#joinName"); if (el) el.focus(); }, 50);
 }
 
+// 登录错误内联显示（避免被登录遮罩盖住看不到提示）
+function setLoginErr(msg) {
+  const el = $("#loginErr");
+  if (!el) return;
+  if (msg) { el.textContent = msg; el.classList.remove("hidden"); }
+  else { el.textContent = ""; el.classList.add("hidden"); }
+}
+
 // 名字即身份：输入 WorkBuddy 名字 → 自动建号/登录 + 申请访问
 async function doJoin() {
   const u = ($("#joinName").value || "").trim();
   const dn = ($("#joinDisplay").value || "").trim();
   const pw = ($("#joinPw").value || "").trim();
-  if (!u || u.length < 2) return toast("名字至少 2 个字符");
-  if (!pw) return toast("请输入密码");
+  setLoginErr("");
+  if (!u || u.length < 2) return setLoginErr("名字至少 2 个字符");
+  if (!pw) return setLoginErr("请输入密码");
   try {
     const res = await fetch("/api/join", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: u, displayName: dn || u, password: pw }) });
     const d = await res.json().catch(() => ({}));
-    if (!res.ok) return toast(d.error || "登录失败");
+    if (!res.ok) return setLoginErr(d.error || "登录失败，请检查名字与密码");
+    setLoginErr("");
     applyAuth(d);
-  } catch (e) { toast("请求失败：" + e.message); }
+  } catch (e) { setLoginErr("请求失败：" + e.message); }
 }
 
 function applyAuth(d) {
