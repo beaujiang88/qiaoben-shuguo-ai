@@ -366,8 +366,16 @@ function renderUserSwitch() {
 }
 
 // ---------- 路由 ----------
-location.onhashchange = () => { state.route = location.hash.slice(1) || "overview"; renderNav(); render(); };
-if (location.hash) state.route = location.hash.slice(1);
+// 旧路由别名：合并前的 plans/progress 统一跳转到 planexec
+const ROUTE_ALIAS = { plans: "planexec", progress: "planexec", plan: "planexec", exec: "planexec" };
+function normalizeRoute(r) { r = (r || "overview").replace(/^\/+/, ""); return ROUTE_ALIAS[r] || r; }
+location.onhashchange = () => {
+  const raw = location.hash.slice(1) || "overview";
+  const r = normalizeRoute(raw);
+  if (r !== raw) location.hash = r; // 旧链接自动跳转到新路由
+  state.route = r; renderNav(); render();
+};
+if (location.hash) state.route = normalizeRoute(location.hash.slice(1));
 
 // ---------- 渲染主入口 ----------
 function render() {

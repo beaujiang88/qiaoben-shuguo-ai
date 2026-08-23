@@ -271,7 +271,14 @@ const app = express();
 app.use(express.json({ limit: "5mb" }));
 // DEBUG: log all API requests
 app.use("/api", (req, res, next) => { console.log(`[REQ] ${req.method} ${req.path}`); next(); });
-app.use(express.static(PUBLIC_DIR));
+// HTML 不缓存（保证发版即生效）；带 ?v= 的静态资源可长缓存
+app.use(express.static(PUBLIC_DIR, {
+  etag: true, lastModified: true, maxAge: 0,
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith(".html")) res.setHeader("Cache-Control", "no-cache");
+    else if (filePath.endsWith(".png")) res.setHeader("Cache-Control", "public, max-age=604800");
+  }
+}));
 
 // 文件上传（图片/视频/文档），存入 public/uploads，通过 /uploads/xxx 访问
 fs.mkdirSync(path.join(PUBLIC_DIR, "uploads"), { recursive: true });
