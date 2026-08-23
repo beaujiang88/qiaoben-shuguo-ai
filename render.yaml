@@ -16,8 +16,14 @@ services:
         sync: false
       - key: DATA_FILE
         value: "/data/db.json"
-    # 持久化：免费版无磁盘，数据会重置。要持久请开启 Render Disk 挂到 /data
-    # disk:
-    #   name: qiaoben-data
-    #   mountPath: /data
-    #   sizeGB: 1
+      - key: MEMBER_PASSWORD
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: ADMIN_USERS
+        value: "beau"
+    # 持久化磁盘：Free 实例文件系统会重置，必须挂盘到 /data 才能保住数据
+    disk:
+      name: qiaoben-data
+      mountPath: /data
+      sizeGB: 1
