@@ -739,7 +739,7 @@ function mediaCard(m) {
   const pushed = m.pushedTo || [];
   return `<div class='card media-card' onclick='previewMedia("${m.id}")'>
     <div class='media-thumb'>${mediaThumb(m)}</div>
-    <div class='row' style='justify-content:space-between;margin-top:8px'><span class='chip brand'>${MEDIA_ICON[m.kind] || "📁"} ${esc(m.kind)}</span><span class='chip'>${esc(m.region || "通用")}</span></div>
+    <div class='row' style='justify-content:space-between;margin-top:8px'><span class='chip brand'>${esc(m.category || "未分类")}</span><span class='chip'>${esc(m.region || "通用")}</span></div>
     <h3 style='margin:6px 0 4px;font-size:15px'>${esc(m.title)}</h3>
     <div class='muted' style='font-size:13px;flex:1'>${esc(m.desc || "")}</div>
     <div style='margin:8px 0'>${(m.tags || []).slice(0, 4).map(t => `<span class='chip'>${esc(t)}</span>`).join("") || ""}</div>
@@ -751,26 +751,51 @@ function mediaCard(m) {
     <div class='meta' style='margin-top:6px'>已推送 ${pushed.length} 个客户${m.pushedWechat ? ` · <span style="color:#07c160">✓ 公众号 ${esc(m.pushedWechat)}</span>` : ""}</div>
   </div>`;
 }
+// 媒体库类型快捷导航：滚动到对应区块
+window.mediaJump = (i) => {
+  const el = document.getElementById("msec-" + i);
+  if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+};
 function renderMedia(main) {
   const allList = state.db.media.filter(m => matches(m, state.query));
   const list = mediaRegionTab === "全部区域" ? allList : allList.filter(m => (m.region || "通用") === mediaRegionTab);
-  const counts = MEDIA_KINDS.map(k => `${MEDIA_ICON[k]} ${list.filter(m => m.kind === k).length}`).join(" &nbsp; ");
-  const regionCounts = MEDIA_REGIONS.slice(1).map(r => `${r}(${allList.filter(m => (m.region || "通用") === r).length})`).join(" / ");
-  const regionTabs = `<div class="row" style="gap:6px;flex-wrap:wrap;margin:10px 0">${MEDIA_REGIONS.map(r =>
-    `<button class="btn btn-sm ${mediaRegionTab === r ? "btn-primary" : ""}" onclick="setMediaRegion('${r}')">${r}</button>`).join("")}</div>`;
-  // 按 category 分区块
-  const cats = [];
-  list.forEach(m => { const c = m.category || "未分类"; if (!cats.includes(c)) cats.push(c); });
-  const ordered = [...MEDIA_KINDS.filter(c => cats.includes(c)), ...cats.filter(c => !MEDIA_KINDS.includes(c))];
-  const blocks = ordered.map(cat => {
-    const items = list.filter(m => (m.category || "未分类") === cat);
+  const kindOf = m => m.kind || "未分类";
+  const catOf = m => m.category || "未分类";
+  // 出现过的类型（按 MEDIA_KINDS 固定顺序优先，未知类型排后）
+  const kinds = [];
+  list.forEach(m => { const k = kindOf(m); if (!kinds.includes(k)) kinds.push(k); });
+  const ordered = [...MEDIA_KINDS.filter(k => kinds.includes(k)), ...kinds.filter(k => !MEDIA_KINDS.includes(k))];
+  const regionTabs = `<div class="row" style="gap:6px;flex-wrap:wrap">${MEDIA_REGIONS.map(r =>
+    `<button class="btn btn-sm ${mediaRegionTab === r ? "btn-primary" : ""}" onclick="setMediaRegion('${r}')">${r} ${r === "全部区域" ? allList.length : allList.filter(m => (m.region || "通用") === r).length}</button>`).join("")}</div>`;
+  // 类型快捷导航条（点击滚动到区块）
+  const typeNav = ordered.length ? `<div class="media-typenav">${ordered.map((k, i) => {
+    const n = list.filter(m => kindOf(m) === k).length;
+    return `<button class="media-nav-chip" onclick="mediaJump(${i})">${MEDIA_ICON[k] || "📁"} ${esc(k)}<span>${n}</span></button>`;
+  }).join("")}</div>` : "";
+  // 按类型分大区块，块内再按分类细分
+  const blocks = ordered.map((kind, i) => {
+    const items = list.filter(m => kindOf(m) === kind);
     if (!items.length) return "";
-    return `<div class="media-block"><div class="media-block-head"><span>${esc(cat)}</span><span class="muted">${items.length} 项</span></div><div class="grid cols-3">${items.map(mediaCard).join("")}</div></div>`;
+    const cats = [];
+    items.forEach(m => { const c = catOf(m); if (!cats.includes(c)) cats.push(c); });
+    const inner = cats.length <= 1
+      ? `<div class="grid cols-3">${items.map(mediaCard).join("")}</div>`
+      : cats.map(cat => {
+          const sub = items.filter(m => catOf(m) === cat);
+          return `<div class="media-sub"><div class="media-sub-head"><span>${esc(cat)}</span><span class="muted">${sub.length} 项</span></div><div class="grid cols-3">${sub.map(mediaCard).join("")}</div></div>`;
+        }).join("");
+    return `<section class="media-block" id="msec-${i}">
+      <div class="media-block-head"><span class="media-block-ic">${MEDIA_ICON[kind] || "📁"}</span><span class="media-block-title">${esc(kind)}</span><span class="chip muted-chip">${items.length} 项</span><span class="media-block-cats">${cats.map(c => `<span class="chip">${esc(c)}</span>`).join("")}</span></div>
+      ${inner}
+    </section>`;
   }).join("") || "<div class='empty'>暂无素材，点右上角新增</div>";
-  main.innerHTML = `<div class='page-head'><div><h2>媒体库</h2><div class='sub'>图文 / 文章 / 海报 / 视频 / 执行文档 / 活动方案 / 案例图文，按分类区块管理，点击卡片即可预览</div></div>
+  main.innerHTML = `<div class='page-head'><div><h2>媒体库</h2><div class='sub'>按类型分区展示：图片 / 视频 / 文章 / 海报等各自成区，区内再按用途分类，点击卡片即可预览</div></div>
     <button class='btn btn-primary' onclick='openMediaForm()'>＋ 新增素材</button></div>
-    <div class='muted' style='margin-bottom:4px'>共 ${list.length} 项 · ${counts} · 区域分布：${regionCounts}</div>
-    ${regionTabs}
+    <div class="media-toolbar">
+      <div class="media-toolbar-row"><span class="media-toolbar-label">区域</span>${regionTabs}</div>
+      <div class="media-toolbar-row"><span class="media-toolbar-label">类型</span>${typeNav || "<span class='muted' style='font-size:13px'>暂无素材</span>"}</div>
+    </div>
+    <div class="muted" style="margin:8px 0 12px;font-size:13px">共 ${list.length} 项素材 · ${ordered.length} 个类型区块</div>
     <div class="media-blocks">${blocks}</div>`;
 }
 window.previewMedia = (id) => {
