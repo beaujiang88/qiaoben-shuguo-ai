@@ -739,7 +739,7 @@ function mediaCard(m) {
   const pushed = m.pushedTo || [];
   return `<div class='card media-card' onclick='previewMedia("${m.id}")'>
     <div class='media-thumb'>${mediaThumb(m)}</div>
-    <div class='row' style='justify-content:space-between;margin-top:8px'><span class='chip brand'>${esc(m.category || "未分类")}</span><span class='chip'>${esc(m.region || "通用")}</span></div>
+    <div class='row' style='justify-content:space-between;margin-top:8px'><span class='chip brand'>${MEDIA_ICON[m.kind] || "📁"} ${esc(m.kind || "未分类")}</span><span class='chip'>${esc(m.region || "通用")}</span></div>
     <h3 style='margin:6px 0 4px;font-size:15px'>${esc(m.title)}</h3>
     <div class='muted' style='font-size:13px;flex:1'>${esc(m.desc || "")}</div>
     <div style='margin:8px 0'>${(m.tags || []).slice(0, 4).map(t => `<span class='chip'>${esc(t)}</span>`).join("") || ""}</div>
@@ -751,51 +751,63 @@ function mediaCard(m) {
     <div class='meta' style='margin-top:6px'>已推送 ${pushed.length} 个客户${m.pushedWechat ? ` · <span style="color:#07c160">✓ 公众号 ${esc(m.pushedWechat)}</span>` : ""}</div>
   </div>`;
 }
-// 媒体库类型快捷导航：滚动到对应区块
+// 媒体库分类快捷导航：滚动到对应分类区块
 window.mediaJump = (i) => {
   const el = document.getElementById("msec-" + i);
   if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
 };
+let mediaTypeFilter = "全部类型";
+window.setMediaType = (t) => { mediaTypeFilter = t; render(); };
 function renderMedia(main) {
   const allList = state.db.media.filter(m => matches(m, state.query));
-  const list = mediaRegionTab === "全部区域" ? allList : allList.filter(m => (m.region || "通用") === mediaRegionTab);
   const kindOf = m => m.kind || "未分类";
   const catOf = m => m.category || "未分类";
-  // 出现过的类型（按 MEDIA_KINDS 固定顺序优先，未知类型排后）
+  // 区域 + 类型 双筛选
+  const regFiltered = mediaRegionTab === "全部区域" ? allList : allList.filter(m => (m.region || "通用") === mediaRegionTab);
+  const list = mediaTypeFilter === "全部类型" ? regFiltered : regFiltered.filter(m => kindOf(m) === mediaTypeFilter);
+  // 出现过的分类（作为分区与导航主体）
+  const cats = [];
+  regFiltered.forEach(m => { const c = catOf(m); if (!cats.includes(c)) cats.push(c); });
+  const ordered = cats.slice().sort((a, b) => regFiltered.filter(m => catOf(m) === b).length - regFiltered.filter(m => catOf(m) === a).length);
+  // 出现过的类型（作为筛选 tabs）
   const kinds = [];
-  list.forEach(m => { const k = kindOf(m); if (!kinds.includes(k)) kinds.push(k); });
-  const ordered = [...MEDIA_KINDS.filter(k => kinds.includes(k)), ...kinds.filter(k => !MEDIA_KINDS.includes(k))];
+  regFiltered.forEach(m => { const k = kindOf(m); if (!kinds.includes(k)) kinds.push(k); });
+  const kindOrdered = [...MEDIA_KINDS.filter(k => kinds.includes(k)), ...kinds.filter(k => !MEDIA_KINDS.includes(k))];
   const regionTabs = `<div class="row" style="gap:6px;flex-wrap:wrap">${MEDIA_REGIONS.map(r =>
     `<button class="btn btn-sm ${mediaRegionTab === r ? "btn-primary" : ""}" onclick="setMediaRegion('${r}')">${r} ${r === "全部区域" ? allList.length : allList.filter(m => (m.region || "通用") === r).length}</button>`).join("")}</div>`;
-  // 类型快捷导航条（点击滚动到区块）
-  const typeNav = ordered.length ? `<div class="media-typenav">${ordered.map((k, i) => {
-    const n = list.filter(m => kindOf(m) === k).length;
-    return `<button class="media-nav-chip" onclick="mediaJump(${i})">${MEDIA_ICON[k] || "📁"} ${esc(k)}<span>${n}</span></button>`;
+  const typeTabs = `<div class="row" style="gap:6px;flex-wrap:wrap">${["全部类型", ...kindOrdered].map(t =>
+    `<button class="btn btn-sm ${mediaTypeFilter === t ? "btn-primary" : ""}" onclick="setMediaType('${t}')">${t === "全部类型" ? t : (MEDIA_ICON[t] || "📁") + " " + t} ${t === "全部类型" ? regFiltered.length : regFiltered.filter(m => kindOf(m) === t).length}</button>`).join("")}</div>`;
+  // 分类快捷导航条（点击滚动到分类区块）
+  const catNav = ordered.length ? `<div class="media-typenav">${ordered.map((c, i) => {
+    const n = list.filter(m => catOf(m) === c).length;
+    if (!n) return "";
+    return `<button class="media-nav-chip" onclick="mediaJump(${i})">${esc(c)}<span>${n}</span></button>`;
   }).join("")}</div>` : "";
-  // 按类型分大区块，块内再按分类细分
-  const blocks = ordered.map((kind, i) => {
-    const items = list.filter(m => kindOf(m) === kind);
+  // 按分类分区，块内再按类型细分
+  const blocks = ordered.map((cat, i) => {
+    const items = list.filter(m => catOf(m) === cat);
     if (!items.length) return "";
-    const cats = [];
-    items.forEach(m => { const c = catOf(m); if (!cats.includes(c)) cats.push(c); });
-    const inner = cats.length <= 1
+    const kds = [];
+    items.forEach(m => { const k = kindOf(m); if (!kds.includes(k)) kds.push(k); });
+    const inner = kds.length <= 1
       ? `<div class="grid cols-3">${items.map(mediaCard).join("")}</div>`
-      : cats.map(cat => {
-          const sub = items.filter(m => catOf(m) === cat);
-          return `<div class="media-sub"><div class="media-sub-head"><span>${esc(cat)}</span><span class="muted">${sub.length} 项</span></div><div class="grid cols-3">${sub.map(mediaCard).join("")}</div></div>`;
+      : kds.map(k => {
+          const sub = items.filter(m => kindOf(m) === k);
+          return `<div class="media-sub"><div class="media-sub-head"><span>${MEDIA_ICON[k] || "📁"} ${esc(k)}</span><span class="muted">${sub.length} 项</span></div><div class="grid cols-3">${sub.map(mediaCard).join("")}</div></div>`;
         }).join("");
     return `<section class="media-block" id="msec-${i}">
-      <div class="media-block-head"><span class="media-block-ic">${MEDIA_ICON[kind] || "📁"}</span><span class="media-block-title">${esc(kind)}</span><span class="chip muted-chip">${items.length} 项</span><span class="media-block-cats">${cats.map(c => `<span class="chip">${esc(c)}</span>`).join("")}</span></div>
+      <div class="media-block-head"><span class="media-block-title">${esc(cat)}</span><span class="chip muted-chip">${items.length} 项</span><span class="media-block-cats">${[...new Set(items.map(m => (m.region || "通用")))].map(r => `<span class="chip">${esc(r)}</span>`).join("")}</span></div>
       ${inner}
     </section>`;
-  }).join("") || "<div class='empty'>暂无素材，点右上角新增</div>";
-  main.innerHTML = `<div class='page-head'><div><h2>媒体库</h2><div class='sub'>按类型分区展示：图片 / 视频 / 文章 / 海报等各自成区，区内再按用途分类，点击卡片即可预览</div></div>
+  }).join("") || "<div class='empty'>当前筛选下暂无素材，点右上角新增或调整筛选</div>";
+  main.innerHTML = `<div class='page-head'><div><h2>媒体库</h2><div class='sub'>按分类分区导航：功能文章 / 品牌物料 / 图片素材等各自成区，可按区域与类型筛选，点击卡片即可预览</div></div>
     <button class='btn btn-primary' onclick='openMediaForm()'>＋ 新增素材</button></div>
     <div class="media-toolbar">
       <div class="media-toolbar-row"><span class="media-toolbar-label">区域</span>${regionTabs}</div>
-      <div class="media-toolbar-row"><span class="media-toolbar-label">类型</span>${typeNav || "<span class='muted' style='font-size:13px'>暂无素材</span>"}</div>
+      <div class="media-toolbar-row"><span class="media-toolbar-label">类型</span>${typeTabs}</div>
+      <div class="media-toolbar-row"><span class="media-toolbar-label">分类</span>${catNav || "<span class='muted' style='font-size:13px'>暂无素材</span>"}</div>
     </div>
-    <div class="muted" style="margin:8px 0 12px;font-size:13px">共 ${list.length} 项素材 · ${ordered.length} 个类型区块</div>
+    <div class="muted" style="margin:8px 0 12px;font-size:13px">共 ${list.length} 项素材 · ${ordered.filter(c => list.some(m => catOf(m) === c)).length} 个分类区块</div>
     <div class="media-blocks">${blocks}</div>`;
 }
 window.previewMedia = (id) => {
