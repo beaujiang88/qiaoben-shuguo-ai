@@ -17,7 +17,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="数果工作台" />
   <meta name="mobile-web-app-capable" content="yes" />
-  <link rel="stylesheet" href="styles.css?v=20260824a" />
+  <link rel="stylesheet" href="styles.css?v=20260824b" />
 </head>
 <body>
   <!-- 登录层（注册 + 登录 + 申请审批） -->
@@ -106,22 +106,52 @@
   <!-- 助理Buddy 悬浮助手（全能 AI 对话入口） -->
   <div id="buddyFab" class="buddy-fab" title="助理Buddy · 全能 AI 助手" style="background:url('mascot-head.png') center/cover;border-radius:50%;box-shadow:0 10px 28px rgba(124,92,255,.45),0 0 0 3px rgba(124,92,255,.2)"></div>
   <div id="buddyPanel" class="buddy-panel hidden">
-    <div class="buddy-head" style="background:linear-gradient(135deg,#7c5cff,#5b8def);display:flex;align-items:center;gap:10px"><div style="width:36px;height:36px;border-radius:50%;background:url('mascot-head.png') center/cover;flex-shrink:0;border:2px solid rgba(255,255,255,.4)"></div><span>助理Buddy · 全能 AI</span><button id="buddyClose" class="x">✕</button></div>
+    <div class="buddy-head">
+      <div class="buddy-avatar" style="background:url('mascot-head.png') center/cover"></div>
+      <div class="buddy-id">
+        <div class="buddy-name">助理Buddy</div>
+        <div class="buddy-tag">全能 AI · 随时帮你写方案 / 做分析 / 出脚本</div>
+      </div>
+      <button id="buddyClose" class="buddy-x" title="收起">✕</button>
+    </div>
     <div class="buddy-body" style="display:flex;flex-direction:column">
       <div id="buddyMsgs"></div>
       <div id="buddyAttZone"></div>
-      <textarea id="buddyInput" placeholder="随便问：写方案、做分析、出脚本、聊业务、查知识…" style="min-height:52px"></textarea>
+      <textarea id="buddyInput" placeholder="随便问：写方案、做分析、出脚本、聊业务、查知识…" style="min-height:92px"></textarea>
       <div class="row" style="gap:6px;flex-wrap:wrap;margin:8px 0 6px">
         <button class="btn btn-sm" onclick="buddyQuick('帮我写一份肠道健康管理项目方案')">✍️ 写方案</button>
         <button class="btn btn-sm" onclick="buddyQuick('汇总本周客户随访与检测指标变化')">📊 做分析</button>
         <button class="btn btn-sm" onclick="buddyQuick('生成一条肠道健康科普短视频脚本')">🎬 出脚本</button>
-        <button class="btn btn-sm" style="margin-left:auto" onclick="buddyClear()" title="清空 Buddy 的对话记忆">🗑 清空记忆</button>
+        <button class="btn btn-sm" onclick="buddyOpenBrain()" title="查看团队大脑（全局共享长期记忆）">🧠 记忆</button>
+        <button class="btn btn-sm" style="margin-left:auto" onclick="buddyClear()" title="清空会话记录 + 团队大脑（全局共享，所有人受影响，不可恢复）">🗑 清记忆</button>
+      </div>
+      <div class="buddy-model-row">
+        <span class="buddy-model-label">🧠 模型</span>
+        <select id="buddyModelSelect" title="切换小助理的 AI 模型（DeepSeek 系列复用 harness 的 API）">
+          <option value="glm">WorkBuddy（GLM·默认）</option>
+          <option value="deepseek-v4-flash">DeepSeek V4-Flash</option>
+          <option value="deepseek-v4-pro">DeepSeek V4-Pro</option>
+          <option value="deepseek-v4-flash-vision-exp">DeepSeek 视觉版（多模态·可看图）</option>
+        </select>
       </div>
       <button class="btn btn-primary" id="buddySend" style="width:100%">🚀 发送（Enter）</button>
     </div>
   </div>
 
+  <div id="brainModal" class="modal hidden">
+    <div class="modal-card" style="max-width:560px">
+      <div class="modal-head">🧠 团队大脑 · 长期记忆 <span id="brainCount" class="muted"></span>
+        <button class="buddy-x" onclick="hideModal('brainModal')">✕</button>
+      </div>
+      <div id="brainList" class="modal-body" style="max-height:60vh;overflow:auto"></div>
+      <div class="modal-foot" style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 14px;border-top:1px solid rgba(0,0,0,.08)">
+        <span class="muted" style="font-size:12px">全局共享 · 所有 AI 接口自动关联 · 越常使用权重越高</span>
+        <button class="btn btn-sm btn-danger" onclick="buddyClearBrain()">清空团队大脑</button>
+      </div>
+    </div>
+  </div>
+
   <script src="vendor/chart.umd.js"></script>
-  <script src="app.js?v=20260824a"></script>
+  <script src="app.js?v=20260824d"></script>
 </body>
 </html>

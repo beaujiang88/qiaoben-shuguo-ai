@@ -977,12 +977,117 @@ const AI_KIND_SYSTEM = {
   generic: "你是乔本·数果 AI 肠道健康管理项目工作台的 AI 助理。根据需求生成结构化、可直接使用的中文草稿，结合「菌群检测+AI解读+个性化干预+随访闭环」业务模型。",
   "proposal-rewrite": "你是乔本·数果 AI 肠道健康管理项目的方案改写专家。你将收到一份方案原文和一条改写指令，请基于原文进行改写：保留原文整体结构与有价值的信息，严格按指令调整相应部分，其余部分保持连贯。输出完整改写后的方案全文（Markdown），不要输出改写说明、对比或寒暄，直接给成品。",
 };
-async function aiComplete(kind, prompt, title, attachments) {
+
+// ===================== 团队大脑：全局共享长期记忆层 =====================
+// 所有 AI 接口（Buddy / 方案改写 / AI任务台 / 肠道管家 / 表单AI）共用同一份记忆。
+// 设计要点：
+//  - 存储：单一 JSON 文件，所有用户/接口共享（全局单一大脑）。
+//  - 省 token：每次调用前用本地关键词加权检索 top-K 相关记忆注入，而非塞入全部历史。
+//  - 像人成长：靠节流的「记忆官」(brainDistill) 把对话/产出提炼成要点写回（去重合并），不存原始废话。
+//  - 机制确保执行：记忆注入为 aiComplete 的强制前置；记忆提炼为各接口完成后的强制后置。
+const BRAIN_MEM_FILE = path.join(__dirname, "data", "brain-memory.json");
+const BRAIN_STATS = { injections: 0, distills: 0, lastInjectAt: 0, lastDistillAt: 0 };
+let _brainDistilling = false;
+let _buddyTurnAccum = 0;
+const BRAIN_TYPES = ["preference", "project", "customer", "todo", "feedback", "person", "fact"];
+
+function brainMemAll() {
+  try { return JSON.parse(fs.readFileSync(BRAIN_MEM_FILE, "utf8")); } catch { return []; }
+}
+function brainMemWrite(all) {
+  try {
+    fs.mkdirSync(path.dirname(BRAIN_MEM_FILE), { recursive: true });
+    fs.writeFileSync(BRAIN_MEM_FILE, JSON.stringify(all, null, 2));
+  } catch (e) { console.log("[Brain] 记忆写入失败:", e.message); }
+}
+// 轻量分词：英文/数字按词，中文按 2-gram（够用、零依赖、零成本）
+function brainTokenize(text) {
+  const s = String(text || "").toLowerCase();
+  const tokens = [];
+  const en = s.match(/[a-z0-9]+/g); if (en) tokens.push(...en);
+  const cn = s.match(/[一-龥]+/g);
+  if (cn) for (const w of cn) for (let i = 0; i < w.length - 1; i++) tokens.push(w.slice(i, i + 2));
+  return tokens;
+}
+// 本地关键词加权检索：返回最相关的 top-K 记忆（控制总字符上限，省 token）
+function brainRetrieve(prompt, k = 8, maxChars = 1500) {
+  const all = brainMemAll();
+  if (!all.length) return [];
+  const qt = [...new Set(brainTokenize(prompt))];
+  const scored = all.map(m => {
+    const text = ((m.content || "") + " " + (m.type || "")).toLowerCase();
+    let overlap = 0;
+    for (const tok of qt) if (text.includes(tok)) overlap++;
+    const score = (m.weight || 1) * 0.5 + overlap * 1.5;
+    return { m, score };
+  }).filter(x => x.score > 0.6).sort((a, b) => b.score - a.score);
+  const out = []; let used = 0;
+  for (const x of scored) {
+    used += (x.m.content || "").length;
+    out.push(x.m);
+    if (out.length >= k || used >= maxChars) break;
+  }
+  return out;
+}
+// 命中后更新权重/使用计数（越常被用到权重越高）
+function brainRecordUsage(mems) {
+  if (!mems.length) return;
+  const all = brainMemAll();
+  const ids = new Set(mems.map(m => m.id));
+  let changed = false;
+  for (const m of all) if (ids.has(m.id)) { m.lastUsed = Date.now(); m.usedCount = (m.usedCount || 0) + 1; m.weight = Math.min(5, (m.weight || 1) + 0.05); changed = true; }
+  if (changed) brainMemWrite(all);
+}
+function brainBlock(mems) {
+  if (!mems.length) return "";
+  return "【团队大脑·长期记忆（全局共享，自动关联）】\n" + mems.map(m => `- (${m.type || "fact"}) ${m.content}`).join("\n") + "\n\n";
+}
+const BRAIN_DISTILL_SYS = `你是乔本·数果 AI 工作台的「记忆官」。阅读[已有记忆]与[最近对话/产出]，抽取其中**新的、可长期复用**的要点，类型：preference(用户偏好/习惯)、project(项目事实)、customer(客户)、todo(待办/计划)、feedback(反馈/纠偏)、person(人物/角色)、fact(其他事实)。与[已有记忆]去重合并；只抽能长期复用的，忽略临时闲聊、一次性指令、纯寒暄。严格只输出 JSON 数组（不要任何其它文字、不要代码块标记）：[{"type":"...","content":"..."}]`;
+// 记忆官：把最近内容提炼成要点写回记忆（节流由调用方控制；内部调用 aiComplete 走 _internal 防递归）
+async function brainDistill(recentText, title = "记忆提炼") {
+  if (_brainDistilling) return;
+  _brainDistilling = true;
+  try {
+    const existing = brainMemAll().map(m => `- (${m.type}) ${m.content}`).join("\n");
+    const q = "【已有记忆】\n" + (existing || "（暂无）") + "\n\n【最近对话/产出】\n" + String(recentText || "").slice(0, 6000);
+    const text = await aiComplete("brain-distill", q, title, null, { _internal: true, sys: BRAIN_DISTILL_SYS });
+    if (!text) return;
+    let arr = [];
+    try { arr = JSON.parse(text.replace(/^[\s\S]*?(\[[\s\S]*\])[\s\S]*$/, "$1")); } catch { arr = []; }
+    if (!Array.isArray(arr) || !arr.length) return;
+    const all = brainMemAll();
+    for (const it of arr) {
+      const c = String(it.content || "").trim().slice(0, 500);
+      if (c.length < 4) continue;
+      const type = BRAIN_TYPES.includes(it.type) ? it.type : "fact";
+      const dup = all.find(m => m.type === type && m.content && (m.content.slice(0, 30) === c.slice(0, 30) || (c.length >= 20 && m.content.includes(c.slice(0, 20)))));
+      if (dup) { dup.weight = Math.min(5, (dup.weight || 1) + 0.3); dup.lastUsed = Date.now(); }
+      else all.push({ id: "bm_" + nanoid(8), type, content: c, weight: 1, createdAt: Date.now(), lastUsed: Date.now(), usedCount: 0 });
+    }
+    brainMemWrite(all);
+    BRAIN_STATS.distills++;
+    BRAIN_STATS.lastDistillAt = Date.now();
+  } catch (e) { console.log("[Brain] distill 失败:", e.message); }
+  finally { _brainDistilling = false; }
+}
+
+async function aiComplete(kind, prompt, title, attachments, opts = {}) {
   const gw = discoverWorkBuddyGateway();
   if (!gw) return null;
+  // —— 团队大脑：强制前置注入（_internal/蒸馏自身不注入，避免递归）——
+  let memoryBlock = "";
+  if (!opts._internal && kind !== "brain-distill") {
+    const mems = brainRetrieve((title || "") + " " + (prompt || ""));
+    if (mems.length) {
+      memoryBlock = brainBlock(mems);
+      brainRecordUsage(mems);
+      BRAIN_STATS.injections++;
+      BRAIN_STATS.lastInjectAt = Date.now();
+    }
+  }
   try {
-    const sys = (AI_KIND_SYSTEM[kind] || AI_KIND_SYSTEM.generic) + "\n直接输出成品内容本身，不要寒暄、不要解释、不要「以下是」之类前缀。";
-    let q = (title ? "【标题/主题】" + title + "\n" : "") + "【需求】" + ((prompt || title || "").toString().trim() || "请生成相关内容草稿");
+    const sys = opts.sys || ((AI_KIND_SYSTEM[kind] || AI_KIND_SYSTEM.generic) + "\n直接输出成品内容本身，不要寒暄、不要解释、不要「以下是」之类前缀。");
+    let q = memoryBlock + (title ? "【标题/主题】" + title + "\n" : "") + "【需求】" + ((prompt || title || "").toString().trim() || "请生成相关内容草稿");
     q += fmtAttachments(attachments);
     const up = await fetch(gw + "/api/v1/llm/completions", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -1049,7 +1154,11 @@ app.post("/api/proposals/:id/rewrite", async (req, res) => {
   }
   prompt += fmtAttachments(attachments);
   const text = await aiComplete("proposal-rewrite", prompt, p.title, attachments);
-  if (text) return res.json({ result: text, engine: AI_ENGINE(), baseVersion: bv });
+  if (text) {
+    // 团队大脑：改写完成后提炼长期记忆
+    brainDistill(prompt + "\n\n" + text).catch(e => console.error("[Brain] rewrite distill 失败:", e.message));
+    return res.json({ result: text, engine: AI_ENGINE(), baseVersion: bv });
+  }
   // 本地兜底：网关不可用时给出可编辑的标记稿，保证流程不中断
   const fallback = (baseContent || "") + "\n\n---\n【AI 改写待完成 · 基于 v" + bv + "】\n改写指令：" + instruction + "\n（AI 网关暂不可用，已保留原文并标记指令，稍后可重新改写）";
   res.json({ result: fallback, engine: "local-template", baseVersion: bv });
@@ -1072,6 +1181,8 @@ app.post("/api/aiTasks/:id/autorun", async (req, res) => {
     }
   }
   const gen = await aiGenerate({ kind: k, prompt: a.prompt, title: a.title, linkedType: a.linkedType, attachments });
+  // 团队大脑：任务完成后提炼长期记忆（指令 + 产出）
+  brainDistill((a.prompt || "") + "\n\n" + (gen.result || "")).catch(e => console.error("[Brain] autorun distill 失败:", e.message));
   a.status = "已完成";
   a.result = gen.result;
   a.updatedAt = Date.now();
@@ -1233,6 +1344,8 @@ async function gutButlerRun(actor) {
 // 手动触发（编辑者/管理员）
 app.post("/api/ai/gut-butler/run", async (req, res) => {
   const m = await gutButlerRun(req.auth ? "m_" + req.auth.user : "m_beau");
+  // 团队大脑：管家产出后提炼长期记忆（仅抽取项目/业务事实，闲聊会被过滤）
+  if (m && m.content) brainDistill((m.title || "") + "\n" + m.content).catch(e => console.error("[Brain] butler distill 失败:", e.message));
   res.json({ ok: true, media: m, todayCount: getCol("media").filter(x => x.butler && x.butlerDate === todayStr()).length });
 });
 // 状态查询
@@ -1316,11 +1429,117 @@ app.delete("/api/buddy/history", (req, res) => {
   buddyMemWrite(all);
   res.json({ ok: true });
 });
+// ---------- 团队大脑：管理端点（查看 / 删除 / 清空 + 审计） ----------
+app.get("/api/brain/memory", (req, res) => {
+  const all = brainMemAll().sort((a, b) => (b.weight || 0) - (a.weight || 0));
+  res.json({ count: all.length, items: all, stats: BRAIN_STATS });
+});
+app.delete("/api/brain/memory/:id", (req, res) => {
+  if (!["editor", "admin"].includes(req.auth?.role)) return res.status(403).json({ error: "仅协作者/管理员可删除记忆" });
+  let all = brainMemAll();
+  const before = all.length;
+  all = all.filter(m => m.id !== req.params.id);
+  brainMemWrite(all);
+  res.json({ ok: true, removed: before - all.length });
+});
+app.delete("/api/brain/memory", (req, res) => {
+  if (!["editor", "admin"].includes(req.auth?.role)) return res.status(403).json({ error: "仅协作者/管理员可清空团队大脑" });
+  brainMemWrite([]);
+  res.json({ ok: true, cleared: true });
+});
+app.get("/api/brain/stats", (req, res) => res.json(BRAIN_STATS));
+// ---------- 助理Buddy：直连 DeepSeek（复用 harness 共用的 DeepSeek API） ----------
+const DEEPSEEK_BASE_URL = (process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com/v1").replace(/\/+$/, "");
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || "";
+const IMG_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp"]);
+
+// 历史 + 当前问题 + 附件 -> OpenAI 兼容 messages
+// 视觉模型(image_url)走多模态 content 数组；其他模型把附件作为文本参考
+function buildDeepSeekMessages(model, history, attachments, sysExtra = "") {
+  const isVision = /vision/i.test(model);
+  const messages = [{ role: "system", content: BUDDY_SYSTEM + (sysExtra ? "\n\n" + sysExtra : "") }];
+  for (let i = 0; i < history.length; i++) {
+    const m = history[i];
+    if (i < history.length - 1) { messages.push({ role: m.role, content: m.content }); continue; }
+    const content = [{ type: "text", text: m.content || "" }];
+    for (const att of attachments) {
+      if (isVision && att.imageData) content.push({ type: "image_url", image_url: { url: att.imageData } });
+      else if (att.text) content.push({ type: "text", text: "\n【附件：" + (att.name || "未命名") + "】\n" + att.text });
+    }
+    messages.push({ role: "user", content: content.length === 1 ? content[0].text : content });
+  }
+  return messages;
+}
+
+async function callDeepSeek(model, history, attachments, memBlock = "") {
+  if (!DEEPSEEK_API_KEY) throw new Error("服务端未配置 DEEPSEEK_API_KEY（在 .env 填入与 harness 共用的 DeepSeek Key）");
+  const messages = buildDeepSeekMessages(model, history, attachments, memBlock);
+  const up = await fetch(DEEPSEEK_BASE_URL + "/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer " + DEEPSEEK_API_KEY },
+    body: JSON.stringify({ model, messages, stream: false }),
+  });
+  const j = await up.json().catch(() => null);
+  if (!j || j.error || !j.choices || !j.choices[0] || !j.choices[0].message || !j.choices[0].message.content)
+    throw new Error((j && j.error && (j.error.message || JSON.stringify(j.error))) || ("HTTP " + up.status));
+  return j.choices[0].message.content;
+}
+
 app.post("/api/buddy/chat", async (req, res) => {
   const history = (Array.isArray(req.body?.messages) ? req.body.messages : [])
     .filter(m => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string" && m.content.trim())
     .slice(-20);
   if (!history.some(m => m.role === "user")) return res.status(400).json({ error: "请输入内容" });
+  const model = (req.body?.model || "glm").toLowerCase();
+
+  // 团队大脑：检索长期记忆并注入（节流抽取由后端在对话中累积触发）
+  const lastUser = history.filter(m => m.role === "user").pop() || history[history.length - 1] || {};
+  const buddyMems = brainRetrieve(lastUser.content || "");
+  const buddyMemBlock = brainBlock(buddyMems);
+  if (buddyMems.length) { brainRecordUsage(buddyMems); BRAIN_STATS.injections++; BRAIN_STATS.lastInjectAt = Date.now(); }
+
+  // 解析附件：图片 -> base64 dataURL；其他 -> 文本提取
+  const ids = Array.isArray(req.body?.attachments) ? req.body.attachments : [];
+  const attachments = [];
+  if (ids.length) {
+    const idx = path.join(AI_FILES_DIR, "index.json");
+    let all = {}; try { all = JSON.parse(fs.readFileSync(idx, "utf8")); } catch {}
+    for (const id of ids.slice(0, 6)) {
+      const meta = all[id]; if (!meta || !meta.path) continue;
+      const ext = (meta.name || "").split(".").pop().toLowerCase();
+      if (IMG_EXTS.has(ext)) {
+        try {
+          const buf = fs.readFileSync(meta.path);
+          const mime = ext === "jpg" ? "jpeg" : ext;
+          attachments.push({ name: meta.name, imageData: "data:image/" + mime + ";base64," + buf.toString("base64") });
+        } catch {}
+      } else {
+        let cached = extractCacheGet(id); if (!cached) { cached = await extractFileText(meta.path); extractCachePut(id, { ...cached, at: Date.now() }); }
+        attachments.push({ name: meta.name, text: cached.text || "" });
+      }
+    }
+  }
+
+  // ---------- DeepSeek 分支：直连，复用 harness 的 DeepSeek API ----------
+  if (model.startsWith("deepseek")) {
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache");
+    res.flushHeaders();
+    const send = (obj) => res.write("data: " + JSON.stringify(obj) + "\n\n");
+    try {
+      const text = await callDeepSeek(model, history, attachments, buddyMemBlock);
+      for (let i = 0; i < text.length; i += 60) {
+        send({ delta: text.slice(i, i + 60) });
+        await new Promise(r => setTimeout(r, 30));
+      }
+    } catch (e) {
+      send({ error: "DeepSeek 调用失败：" + (e.message || "网络异常") });
+    }
+    triggerBuddyDistill(history);
+    return res.end();
+  }
+
+  // ---------- 原 WorkBuddy 网关分支（glm / 默认） ----------
   const gateway = discoverWorkBuddyGateway();
   if (!gateway) {
     return res.status(503).json({ error: "AI 引擎未就绪：请确认 DSH（AI_BACKEND=dsh）或 WorkBuddy 桌面端（AI_BACKEND=workbuddy）正在运行。" });
@@ -1330,22 +1549,10 @@ app.post("/api/buddy/chat", async (req, res) => {
   res.flushHeaders();
   const send = (obj) => res.write("data: " + JSON.stringify(obj) + "\n\n");
   try {
-    // 一次性 Agent 无多轮记忆，把历史对话压平进 userPrompt
-    let q = history.length > 1
+    // 一次性 Agent 无多轮记忆，把历史对话压平进 userPrompt；并注入团队大脑长期记忆
+    let q = buddyMemBlock + (history.length > 1
       ? "【历史对话】\n" + history.slice(0, -1).map(m => (m.role === "user" ? "用户：" : "助理：") + m.content).join("\n") + "\n\n【当前问题】\n" + history[history.length - 1].content
-      : history[0].content;
-    // 解析附件并追加到当前问题
-    const ids = Array.isArray(req.body?.attachments) ? req.body.attachments : [];
-    const attachments = [];
-    if (ids.length) {
-      const idx = path.join(AI_FILES_DIR, "index.json");
-      let all = {}; try { all = JSON.parse(fs.readFileSync(idx, "utf8")); } catch {}
-      for (const id of ids.slice(0, 6)) {
-        const meta = all[id]; if (!meta) continue;
-        let cached = extractCacheGet(id); if (!cached) { cached = await extractFileText(meta.path); extractCachePut(id, { ...cached, at: Date.now() }); }
-        attachments.push({ name: meta.name, text: cached.text || "" });
-      }
-    }
+      : history[0].content);
     q += fmtAttachments(attachments);
     const up = await fetch(gateway + "/api/v1/llm/completions", {
       method: "POST",
@@ -1355,6 +1562,7 @@ app.post("/api/buddy/chat", async (req, res) => {
     const j = await up.json().catch(() => null);
     if (!j || j.success !== true || typeof j.text !== "string" || !j.text.trim()) {
       send({ error: "WorkBuddy 应答失败：" + ((j && j.error) || "HTTP " + up.status) });
+      triggerBuddyDistill(history);
       return res.end();
     }
     // 分段推送，前端呈现打字机效果
@@ -1366,8 +1574,17 @@ app.post("/api/buddy/chat", async (req, res) => {
   } catch (e) {
     send({ error: "调用失败：" + (e.message || "网络异常") });
   }
+  triggerBuddyDistill(history);
   res.end();
 });
+
+// Buddy 对话节流抽取：每 6 轮触发一次「记忆官」提炼成长（全局大脑，后台异步不阻塞响应）
+function triggerBuddyDistill(history) {
+  _buddyTurnAccum++;
+  if (_buddyTurnAccum % 6 !== 0) return;
+  const recent = history.slice(-12).map(m => (m.role === "user" ? "用户：" : "助理：") + m.content).join("\n");
+  brainDistill(recent).catch(e => console.error("[Brain] buddy distill 失败:", e.message));
+}
 
 // ---------- WebSocket 实时同步 ----------
 const server = http.createServer(app);

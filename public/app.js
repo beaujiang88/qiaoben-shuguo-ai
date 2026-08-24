@@ -2842,12 +2842,46 @@ async function buddyLoad() {
   } catch { /* 未登录等情况忽略 */ }
 }
 window.buddyClear = async () => {
-  if (!confirm("确定清空 Buddy 的对话记忆吗？此操作不可恢复。")) return;
-  try { await api("DELETE", "/buddy/history"); } catch { /* 尽力清空 */ }
+  if (!confirm("将清空【本会话记录 + 团队大脑（全局共享记忆，所有人受影响）】，此操作不可恢复。确定吗？")) return;
+  try { await api("DELETE", "/buddy/history"); } catch { /* 尽力清空会话 */ }
+  try { await api("DELETE", "/brain/memory"); } catch { /* 无权限或无大脑时忽略 */ }
   buddyHistory = [];
   buddyRender();
-  toast("记忆已清空");
+  toast("会话与团队大脑记忆已清空");
 };
+// ---------- 团队大脑：查看 / 删除 / 清空 ----------
+window.buddyOpenBrain = async () => {
+  showModal("brainModal");
+  const box = $("#brainList"), cnt = $("#brainCount");
+  if (box) box.innerHTML = "<div class='muted'>加载中…</div>";
+  try {
+    const data = await api("GET", "/brain/memory");
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (cnt) cnt.textContent = "· 共 " + items.length + " 条";
+    if (!items.length) { box.innerHTML = "<div class='empty'>大脑还是空的——多聊几句或跑几个 AI 任务，它就会开始记东西。</div>"; return; }
+    box.innerHTML = items.map(m => `
+      <div style="display:flex;align-items:flex-start;gap:8px;padding:8px 4px;border-bottom:1px solid rgba(0,0,0,.06)">
+        <span style="flex:0 0 auto;font-size:11px;background:#eef2ff;color:#4338ca;border-radius:6px;padding:1px 6px;margin-top:2px">${esc(m.type || "fact")}</span>
+        <span style="flex:1;font-size:13px;line-height:1.5">${esc(m.content || "")}</span>
+        <span class="muted" style="flex:0 0 auto;font-size:11px;margin-top:2px">w${(m.weight||1).toFixed(1)}·用${(m.usedCount||0)}</span>
+        <button class="x" style="flex:0 0 auto;margin-top:2px" onclick="buddyDeleteMemory('${m.id}')" title="删除这条">✕</button>
+      </div>`).join("");
+  } catch (e) {
+    if (box) box.innerHTML = "<div class='muted'>读取失败：" + esc(e.message || "无权限") + "</div>";
+  }
+};
+window.buddyDeleteMemory = async (id) => {
+  if (!confirm("删除这条记忆？")) return;
+  try { await api("DELETE", "/brain/memory/" + id); toast("已删除"); buddyOpenBrain(); }
+  catch (e) { toast("删除失败：" + (e.message || "无权限")); }
+};
+window.buddyClearBrain = async () => {
+  if (!confirm("清空整个团队大脑（全局共享，所有人受影响，不可恢复）？")) return;
+  try { await api("DELETE", "/brain/memory"); toast("团队大脑已清空"); buddyOpenBrain(); }
+  catch (e) { toast("清空失败：" + (e.message || "无权限")); }
+};
+window.hideModal = (id) => { const el = document.getElementById(id); if (el) el.classList.add("hidden"); };
+window.showModal = (id) => { const el = document.getElementById(id); if (el) el.classList.remove("hidden"); };
 function buddyTitle(text) {
   const line = String(text || "").split("\n").map(s => s.trim()).find(s => s && !/^#{1,6}$/.test(s)) || "Buddy 回复";
   return line.replace(/^[#>*\-\s]+/, "").replace(/^#+\s*/, "").slice(0, 40) || "Buddy 回复";
@@ -2908,7 +2942,7 @@ window.buddySend = async () => {
     const r = await fetch("/api/buddy/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + (state.token || "") },
-      body: JSON.stringify({ messages: buddyHistory.slice(0, -1).filter(m => !m.seed), attachments: atts.map(a => a.id) }),
+      body: JSON.stringify({ messages: buddyHistory.slice(0, -1).filter(m => !m.seed), attachments: atts.map(a => a.id), model: window.buddyModel || "glm" }),
       signal: ctrl.signal,
     });
     if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || "HTTP " + r.status); }
@@ -3005,19 +3039,32 @@ window.buddyGoto = (route) => {
   if (attZone) attZone.innerHTML = attWidgetHTML("buddy", { hint: "支持图片 / PDF / Word / Excel 等，可拖拽或粘贴" });
   attEnableDrop("buddy", "#buddyPanel");
   attEnablePaste("buddy", "#buddyInput");
-  if (fab) fab.onclick = async () => {
+  if (fab) fab.addEventListener("click", (e) => {
+    e.stopPropagation(); // 阻止冒泡到 document 的「点外部关闭」逻辑，避免刚打开就被关掉
     panel.classList.toggle("hidden");
     if (!panel.classList.contains("hidden")) {
-      await buddyLoad(); // 首次打开时拉取持久记忆
-      buddyRender();
+      buddyLoad().then(() => buddyRender()); // 首次打开时拉取持久记忆
       if (input) setTimeout(() => input.focus(), 50);
     }
-  };
+  });
   if (close) close.onclick = () => panel.classList.add("hidden");
   if (send) send.onclick = () => window.buddySend();
+  // 模型选择器：localStorage 持久化
+  const buddySel = $("#buddyModelSelect");
+  if (buddySel) {
+    window.buddyModel = localStorage.getItem("buddyModel") || "glm";
+    buddySel.value = window.buddyModel;
+    buddySel.onchange = () => { window.buddyModel = buddySel.value; localStorage.setItem("buddyModel", buddySel.value); };
+    // 原生 select 的选项在 DOM 中不属于面板，点击选项会冒泡到 document 误触发关闭，这里拦截
+    buddySel.addEventListener("click", (e) => e.stopPropagation());
+    buddySel.addEventListener("pointerdown", (e) => e.stopPropagation());
+  }
   if (input) input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); window.buddySend(); } });
+  // 点击面板外部才关闭（点面板内、点悬浮球本身都不关）
   document.addEventListener("click", (e) => {
-    if (panel && !panel.classList.contains("hidden") && !panel.contains(e.target) && e.target !== fab && !fab.contains(e.target)) panel.classList.add("hidden");
+    if (!panel || panel.classList.contains("hidden")) return;
+    if (panel.contains(e.target) || fab.contains(e.target)) return;
+    panel.classList.add("hidden");
   });
 })();
 
